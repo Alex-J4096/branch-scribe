@@ -143,3 +143,41 @@
 - 保留画布作为结构视图，列表作为定位和删除的管理视图。
 - 运行 `npm run typecheck` 和 `npm run build`，均通过。
 - 更新 `ARCHITECTURE.md` 中 Phase 1 前端任务和验收清单。
+
+### Step 16: 接入 Tiptap 富文本正文编辑器
+
+- 安装 `@tiptap/vue-3` 和 `@tiptap/starter-kit`。
+- 新增 `RichTextEditor` 组件，提供粗体、斜体、二级标题、无序列表、有序列表、撤销和重做工具栏。
+- 将 block inspector 中的 textarea 替换为 Tiptap 编辑器。
+- 新保存的 revision 使用 `html` content format；旧的 markdown/text 内容会作为普通段落载入，避免内容丢失。
+- 保持现有手动保存链路，每次点击保存都会创建新的 current revision。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 对 Tiptap 相关 bundle 给出体积警告，功能不受影响。
+- 更新 `ARCHITECTURE.md` 中 Phase 2 的 Tiptap、正文编辑器、手动保存和对应验收项。
+
+### Step 17: 增加标题编辑、字数统计和 revision 状态
+
+- 在 block inspector 中新增可选标题编辑表单，复用后端 `PATCH /api/blocks/:blockId`。
+- 正文编辑区显示实时字数统计，中文按字计数，英文和数字按词计数。
+- 正文编辑区显示当前内容是否未保存，便于区分草稿和 current revision。
+- 新增 revision 状态条，展示当前 revision 的 content format、content hash 短码和创建信息。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 2 的标题编辑、字数统计和当前 revision 状态任务。
+
+### Step 18: 增加 revision diff viewer
+
+- 在历史版本区域新增旧版本/新版本两个选择器，支持选择任意两个 revision 对比。
+- 新增前端文本 diff viewer，先将 HTML/文本内容转为纯文本，再按中文字符、英文词、数字和标点做 LCS diff。
+- diff viewer 用绿色标识新增内容，用红色删除线标识删除内容。
+- 保留原有点击历史版本恢复为 current revision 的交互，作为 Phase 2 rollback 路径。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 2 的 diff viewer、双 revision 对比、rollback 和对应验收项。
+
+### Step 19: 增加本地草稿自动保存
+
+- 在 block inspector 中增加本地草稿自动保存，编辑正文后 600ms 自动写入 `localStorage`。
+- 草稿按 project/block 隔离，并记录 base revision，避免旧草稿覆盖新的 current revision。
+- 打开 block 时如果存在同 base revision 的未保存草稿，会自动恢复并显示草稿状态。
+- 保存 revision、选择历史 revision 回滚或点击“丢弃草稿”时，会清除对应本地草稿。
+- 同步确认后端 revision `metadata` 和 `source` 已在创建 revision 链路中落库。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 2 的自动保存草稿、metadata、source 和验收状态。

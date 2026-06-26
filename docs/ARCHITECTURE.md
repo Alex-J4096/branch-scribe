@@ -1325,33 +1325,33 @@ branchscribe/
 
 ### 前端任务
 
-* [ ] 集成 Tiptap。
-* [ ] 实现 block 正文编辑器。
-* [ ] 支持手动保存为新 revision。
-* [ ] 支持自动保存草稿，可选。
-* [ ] 实现 revision diff viewer。
-* [ ] 支持选择两个 revision 进行对比。
-* [ ] 支持将旧 revision 恢复为当前 revision。
-* [ ] 支持 block 标题编辑。
-* [ ] 支持 block 字数统计。
-* [ ] 支持当前 revision 状态显示。
+* [x] 集成 Tiptap。
+* [x] 实现 block 正文编辑器。
+* [x] 支持手动保存为新 revision。
+* [x] 支持自动保存草稿，可选。
+* [x] 实现 revision diff viewer。
+* [x] 支持选择两个 revision 进行对比。
+* [x] 支持将旧 revision 恢复为当前 revision。
+* [x] 支持 block 标题编辑。
+* [x] 支持 block 字数统计。
+* [x] 支持当前 revision 状态显示。
 
 ### 后端任务
 
 * [x] 实现 content_hash。
-* [ ] 实现 revision diff API，可选，也可以前端 diff。
-* [ ] 实现 revision rollback。
-* [ ] 实现 revision metadata。
-* [ ] 保存 revision source：user、llm、import。
+* [x] 实现 revision diff API，可选，也可以前端 diff。
+* [x] 实现 revision rollback。
+* [x] 实现 revision metadata。
+* [x] 保存 revision source：user、llm、import。
 
 ### 验收标准
 
-* [ ] 用户可以在 Tiptap 中编辑正文。
-* [ ] 每次保存都会创建新 revision。
-* [ ] 用户可以查看历史版本。
-* [ ] 用户可以比较两个版本差异。
-* [ ] 用户可以回滚到旧版本。
-* [ ] 用户可以 fork 后在分支上继续写。
+* [x] 用户可以在 Tiptap 中编辑正文。
+* [x] 每次保存都会创建新 revision。
+* [x] 用户可以查看历史版本。
+* [x] 用户可以比较两个版本差异。
+* [x] 用户可以回滚到旧版本。
+* [x] 用户可以 fork 后在分支上继续写。
 
 ---
 

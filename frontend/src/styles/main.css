@@ -122,6 +122,12 @@ p {
   padding: 0;
 }
 
+.icon-button.is-active {
+  border-color: #79aaa5;
+  background: #e7f2f1;
+  color: #246b63;
+}
+
 .project-list {
   display: grid;
   min-height: 100vh;
@@ -592,20 +598,124 @@ p {
 }
 
 .inspector__actions,
-.fork-form {
+.fork-form,
+.title-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
-.fork-form {
+.fork-form,
+.title-form {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.revision-status {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.revision-status span {
+  overflow: hidden;
+  max-width: 100%;
+  border: 1px solid #d8e2ea;
+  border-radius: 999px;
+  background: #f6f9fb;
+  color: #5c6c7c;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rich-editor {
+  overflow: hidden;
+  border: 1px solid #cfd9e2;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.rich-editor__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid #dce4eb;
+  background: #f8fafb;
+  padding: 6px;
+}
+
+.rich-editor__toolbar .icon-button {
+  width: 30px;
+  min-height: 30px;
+}
+
+.rich-editor__spacer {
+  flex: 1;
+}
+
+.rich-editor__content {
+  min-height: 360px;
+  max-height: 55vh;
+  overflow: auto;
+  padding: 12px;
+  outline: none;
+  line-height: 1.65;
+}
+
+.rich-editor__content p,
+.rich-editor__content h2,
+.rich-editor__content ul,
+.rich-editor__content ol {
+  margin: 0 0 10px;
+}
+
+.rich-editor__content h2 {
+  font-size: 18px;
+}
+
+.rich-editor__content ul,
+.rich-editor__content ol {
+  padding-left: 22px;
 }
 
 .revision-list {
   display: grid;
   gap: 6px;
   padding-top: 4px;
+}
+
+.diff-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.diff-viewer {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #d8e2ea;
+  border-radius: 6px;
+  background: #ffffff;
+  line-height: 1.7;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+.diff-viewer__insert {
+  border-radius: 3px;
+  background: #dff4e8;
+  color: #1f6b3d;
+  text-decoration: none;
+}
+
+.diff-viewer__delete {
+  border-radius: 3px;
+  background: #ffe4e0;
+  color: #9f3127;
+  text-decoration: line-through;
 }
 
 .empty-state {
