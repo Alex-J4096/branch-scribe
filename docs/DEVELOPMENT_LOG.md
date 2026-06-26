@@ -368,3 +368,20 @@
 - 同步运行中的 `branchscribe-postgres`：清理 1 条旧的非 env API key 引用，并添加 `model_profiles_api_key_ref_check` 约束。
 - 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行；Vite 仍提示 Tiptap bundle 体积警告。
 - 更新 `ARCHITECTURE.md`，Phase 3 所有任务和验收项已完成。
+
+### Step 38: Phase 4 启动 Canon Entity CRUD
+
+- 新增 `backend/internal/canon` 包，实现 Canon Entity 的 list/create/get/update/delete。
+- 新增 API 路由：
+  - `GET /api/projects/:projectId/canon`
+  - `POST /api/projects/:projectId/canon`
+  - `GET /api/canon/:entityId`
+  - `PATCH /api/canon/:entityId`
+  - `DELETE /api/canon/:entityId`
+- 支持 entity 类型：`character`、`location`、`faction`、`item`、`rule`、`event`。
+- 列表接口支持按 `type`、`status` 和 `q` 过滤；`q` 会匹配 name、description 和 aliases。
+- 支持 aliases 去重、attributes JSON、importance 1-10 和 status：`canon`、`draft`、`deprecated`。
+- 前端 API client 新增 Canon Entity 类型和 CRUD 方法，供后续角色/地点/世界规则页面复用。
+- 重启后端后，通过真实 API 冒烟验证：创建临时 project，创建 character canon entity，按 type/q 查询，读取详情，更新 status/importance，删除 entity，删除测试 project。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的 Canon Entity CRUD 和 entity 类型任务。

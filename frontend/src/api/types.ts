@@ -87,6 +87,20 @@ export type ProjectGraph = {
   edges: GraphEdge[]
 }
 
+export type CanonEntity = {
+  id: string
+  project_id: string
+  type: 'character' | 'location' | 'faction' | 'item' | 'rule' | 'event'
+  name: string
+  aliases: string[]
+  description: string | null
+  attributes: Record<string, unknown>
+  importance: number
+  status: 'canon' | 'draft' | 'deprecated'
+  created_at: string
+  updated_at: string
+}
+
 export type ModelProfile = {
   id: string
   project_id: string | null
@@ -189,6 +203,16 @@ export type CreateRevisionInput = {
   generation_run_id?: string | null
   metadata?: Record<string, unknown>
   set_current?: boolean
+}
+
+export type CanonEntityInput = {
+  type: CanonEntity['type']
+  name: string
+  aliases?: string[]
+  description?: string | null
+  attributes?: Record<string, unknown>
+  importance?: number
+  status?: CanonEntity['status']
 }
 
 export type ModelProfileInput = {

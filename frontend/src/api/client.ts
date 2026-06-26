@@ -4,6 +4,8 @@ import type {
   Block,
   BlockDetail,
   Branch,
+  CanonEntity,
+  CanonEntityInput,
   CreateBlockInput,
   ModelProfileInput,
   PromptTemplateInput,
@@ -185,6 +187,30 @@ export const api = {
     request<GraphEdge>(`/projects/${projectId}/graph/edges`, {
       method: 'POST',
       body: JSON.stringify(input),
+    }),
+
+  listCanonEntities: (projectId: string, filter: { type?: CanonEntity['type']; status?: CanonEntity['status']; q?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (filter.type) query.set('type', filter.type)
+    if (filter.status) query.set('status', filter.status)
+    if (filter.q) query.set('q', filter.q)
+    const suffix = query.toString() ? `?${query.toString()}` : ''
+    return request<CanonEntity[]>(`/projects/${projectId}/canon${suffix}`)
+  },
+  createCanonEntity: (projectId: string, input: CanonEntityInput) =>
+    request<CanonEntity>(`/projects/${projectId}/canon`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  getCanonEntity: (entityId: string) => request<CanonEntity>(`/canon/${entityId}`),
+  updateCanonEntity: (entityId: string, input: Partial<CanonEntityInput>) =>
+    request<CanonEntity>(`/canon/${entityId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deleteCanonEntity: (entityId: string) =>
+    request<{ deleted: boolean }>(`/canon/${entityId}`, {
+      method: 'DELETE',
     }),
 
   getBlock: (blockId: string) => request<BlockDetail>(`/blocks/${blockId}`),

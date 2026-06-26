@@ -1457,8 +1457,8 @@ branchscribe/
 
 ### 后端任务
 
-* [ ] 实现 Canon Entity CRUD。
-* [ ] 支持 entity 类型：character、location、faction、item、rule、event。
+* [x] 实现 Canon Entity CRUD。
+* [x] 支持 entity 类型：character、location、faction、item、rule、event。
 * [ ] 实现 Memory Chunk CRUD。
 * [ ] 实现 embedding provider。
 * [ ] 实现 memory semantic search。
