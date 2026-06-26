@@ -757,8 +757,8 @@ p {
   border: 2px solid #ffffff;
   background: #2f7d76;
   box-shadow: 0 0 0 1px rgba(47, 125, 118, 0.55);
-  pointer-events: none;
-  z-index: 1;
+  pointer-events: all;
+  z-index: 3;
 }
 
 .story-node__handle:hover {
@@ -838,11 +838,31 @@ p {
   stroke-dasharray: 7 5;
 }
 
-.story-edge {
-  stroke: #5d7184;
+.story-edge .vue-flow__edge-path {
+  stroke: #2f7d76;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 1px 1px rgba(24, 33, 47, 0.16));
 }
 
-.story-edge--fork {
+.story-edge .vue-flow__edge-text {
+  fill: #253241;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.story-edge--alternative .vue-flow__edge-path {
+  stroke: #7a4fa3;
+}
+
+.story-edge--references .vue-flow__edge-path {
+  stroke: #466987;
+}
+
+.story-edge--summarizes .vue-flow__edge-path {
+  stroke: #607449;
+}
+
+.story-edge--fork .vue-flow__edge-path {
   stroke: #9b6b28;
 }
 
@@ -917,6 +937,91 @@ p {
   padding: 5px 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.field-label,
+.llm-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.field-label span {
+  color: #526372;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.llm-task-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.llm-task-grid .button {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.llm-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border: 1px solid #d8e2ea;
+  border-radius: 6px;
+  padding: 9px 10px;
+  color: #536578;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.llm-message--warning {
+  border-color: #e1c98f;
+  background: #fff9e8;
+  color: #765b1d;
+}
+
+.llm-message--error {
+  border-color: #e3b3ad;
+  background: #fff1ef;
+  color: #9f3127;
+}
+
+.llm-output {
+  display: grid;
+  gap: 8px;
+}
+
+.llm-output__meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.llm-output__meta span {
+  overflow: hidden;
+  max-width: 100%;
+  border: 1px solid #d8e2ea;
+  border-radius: 999px;
+  background: #f6f9fb;
+  color: #5c6c7c;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-output__text {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid #d8e2ea;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #253241;
+  line-height: 1.7;
+  padding: 10px;
+  white-space: pre-wrap;
 }
 
 .rich-editor {

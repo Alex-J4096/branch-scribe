@@ -14,12 +14,20 @@ const queryClient = useQueryClient()
 const projectId = computed(() => String(route.params.projectId))
 const selectedProfileId = ref<string | null>(null)
 
+const providerBaseUrls: Partial<Record<ModelProfileInput['provider'], string>> = {
+  openai: 'https://api.openai.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  deepseek: 'https://api.deepseek.com/v1',
+  moonshot: 'https://api.moonshot.cn/v1',
+  siliconflow: 'https://api.siliconflow.cn/v1',
+}
+
 const form = reactive<ModelProfileInput>({
   name: '',
   provider: 'openai_compatible',
   model: '',
   base_url: '',
-  api_key: '',
+  api_key: 'BRANCHSCRIBE_MODEL_API_KEY',
   temperature: 0.8,
   top_p: 0.9,
   max_tokens: 2048,
@@ -38,6 +46,7 @@ const profilesQuery = useQuery({
 
 const profiles = computed(() => profilesQuery.data.value ?? [])
 const selectedProfile = computed(() => profiles.value.find((profile) => profile.id === selectedProfileId.value) ?? null)
+const providerDefaultBaseUrl = computed(() => providerBaseUrls[form.provider] ?? '')
 
 watch(
   profiles,
@@ -99,12 +108,22 @@ function resetForm() {
   form.provider = 'openai_compatible'
   form.model = ''
   form.base_url = ''
-  form.api_key = ''
+  form.api_key = 'BRANCHSCRIBE_MODEL_API_KEY'
   form.temperature = 0.8
   form.top_p = 0.9
   form.max_tokens = 2048
   form.context_window = 32768
 }
+
+watch(
+  () => form.provider,
+  (provider, previousProvider) => {
+    const currentBaseUrl = form.base_url?.trim() ?? ''
+    const previousDefault = previousProvider ? providerBaseUrls[previousProvider] : ''
+    if (currentBaseUrl && currentBaseUrl !== previousDefault) return
+    form.base_url = providerBaseUrls[provider] ?? ''
+  },
+)
 
 function submitProfile() {
   if (!form.name.trim() || !form.model.trim()) return
@@ -202,19 +221,20 @@ function sanitizeForm(): ModelProfileInput {
                 <option value="openrouter">OpenRouter</option>
                 <option value="deepseek">DeepSeek</option>
                 <option value="moonshot">Moonshot</option>
+                <option value="siliconflow">SiliconFlow</option>
               </select>
             </label>
             <label>
               <span>Base URL</span>
-              <input v-model="form.base_url" type="url" placeholder="https://api.openai.com/v1" />
+              <input v-model="form.base_url" type="url" :placeholder="providerDefaultBaseUrl || 'https://api.openai.com/v1'" />
             </label>
             <label>
               <span>Model</span>
               <input v-model="form.model" type="text" placeholder="gpt-4.1-mini" />
             </label>
             <label class="settings-form__wide">
-              <span>API key · {{ selectedProfile?.has_api_key ? '已配置' : '未配置' }}</span>
-              <input v-model="form.api_key" type="password" placeholder="留空则不修改" autocomplete="off" />
+              <span>API key 环境变量 · {{ selectedProfile?.has_api_key ? '已配置' : '未配置' }}</span>
+              <input v-model="form.api_key" type="text" placeholder="例如 BRANCHSCRIBE_MODEL_API_KEY；编辑已有配置时留空则不修改" autocomplete="off" />
             </label>
           </div>
         </section>

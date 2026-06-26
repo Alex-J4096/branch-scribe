@@ -6,10 +6,15 @@ import type {
   Branch,
   CreateBlockInput,
   ModelProfileInput,
+  PromptTemplateInput,
   CreateProjectInput,
   CreateRevisionInput,
+  GenerateOnceInput,
+  GenerateOnceResult,
+  GenerateStreamEvent,
   GraphEdge,
   ModelProfile,
+  PromptTemplate,
   Project,
   ProjectGraph,
   Revision,
@@ -48,6 +53,89 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   return envelope.data
+}
+
+async function generateStream(
+  input: GenerateOnceInput,
+  onEvent: (event: GenerateStreamEvent) => void,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(`${apiBaseUrl}/generate/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify(input),
+    signal,
+  })
+
+  if (!response.ok) {
+    const envelope = (await response.json()) as ApiErrorEnvelope
+    const error = envelope.error ?? {
+      code: 'HTTP_ERROR',
+      message: `Request failed with status ${response.status}`,
+    }
+    throw new ApiClientError(response.status, error.code, error.message)
+  }
+  if (!response.body) {
+    throw new ApiClientError(response.status, 'STREAM_UNAVAILABLE', 'Response stream is unavailable')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let lineBuffer = ''
+  let eventDataLines: string[] = []
+
+  const dispatchEvent = () => {
+    if (!eventDataLines.length) return
+    const event = parseSSEData(eventDataLines.join('\n'))
+    eventDataLines = []
+    if (event) {
+      onEvent(event)
+    }
+  }
+
+  const consumeLine = (rawLine: string) => {
+    const line = rawLine.trimEnd()
+    if (line === '') {
+      dispatchEvent()
+      return
+    }
+    const trimmedStart = line.trimStart()
+    if (trimmedStart.startsWith('data:')) {
+      eventDataLines.push(trimmedStart.slice(5).trimStart())
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    lineBuffer += decoder.decode(value, { stream: true })
+    const lines = lineBuffer.split(/\r\n|\n|\r/)
+    lineBuffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      consumeLine(line)
+    }
+  }
+
+  lineBuffer += decoder.decode()
+  if (lineBuffer) {
+    consumeLine(lineBuffer)
+  }
+  dispatchEvent()
+}
+
+function parseSSEData(data: string): GenerateStreamEvent | null {
+  data = data.trim()
+  if (!data) return null
+  try {
+    return JSON.parse(data) as GenerateStreamEvent
+  } catch {
+    throw new ApiClientError(200, 'INVALID_STREAM_EVENT', `Invalid SSE event payload: ${data.slice(0, 120)}`)
+  }
 }
 
 export const api = {
@@ -131,4 +219,31 @@ export const api = {
     request<{ deleted: boolean }>(`/model-profiles/${profileId}`, {
       method: 'DELETE',
     }),
+
+  listPromptTemplates: (projectId: string, taskType?: string) => {
+    const query = taskType ? `?task_type=${encodeURIComponent(taskType)}` : ''
+    return request<PromptTemplate[]>(`/projects/${projectId}/prompt-templates${query}`)
+  },
+  createPromptTemplate: (projectId: string, input: PromptTemplateInput) =>
+    request<PromptTemplate>(`/projects/${projectId}/prompt-templates`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  getPromptTemplate: (templateId: string) => request<PromptTemplate>(`/prompt-templates/${templateId}`),
+  updatePromptTemplate: (templateId: string, input: Partial<PromptTemplateInput>) =>
+    request<PromptTemplate>(`/prompt-templates/${templateId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deletePromptTemplate: (templateId: string) =>
+    request<{ deleted: boolean }>(`/prompt-templates/${templateId}`, {
+      method: 'DELETE',
+    }),
+
+  generateOnce: (input: GenerateOnceInput) =>
+    request<GenerateOnceResult>('/generate/once', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  generateStream,
 }

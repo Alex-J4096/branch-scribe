@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import { Bold, Heading2, Italic, List, ListOrdered, Redo2, Undo2 } from 'lucide-vue-next'
+import type { Editor } from '@tiptap/core'
 
 const props = defineProps<{
   modelValue: string
@@ -11,9 +12,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  selectionChange: [value: string]
 }>()
 
 const editorContent = computed(() => normalizeEditorContent(props.modelValue, props.contentFormat))
+const lastTextSelection = ref<{ from: number; to: number; text: string } | null>(null)
 
 const editor = useEditor({
   extensions: [StarterKit],
@@ -25,6 +28,10 @@ const editor = useEditor({
   },
   onUpdate: ({ editor }) => {
     emit('update:modelValue', editor.getHTML())
+    captureSelection(editor)
+  },
+  onSelectionUpdate: ({ editor }) => {
+    captureSelection(editor)
   },
 })
 
@@ -63,6 +70,47 @@ function escapeHTML(value: string) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
 }
+
+function captureSelection(instance?: Editor | null) {
+  instance ??= editor.value
+  if (!instance) return
+
+  const { from, to } = instance.state.selection
+  const text = instance.state.doc.textBetween(from, to, '\n').trim()
+  if (from !== to && text) {
+    lastTextSelection.value = { from, to, text }
+    emit('selectionChange', text)
+    return
+  }
+  emit('selectionChange', '')
+}
+
+function getSelectedText() {
+  return lastTextSelection.value?.text ?? ''
+}
+
+function replaceSelectionWithHTML(html: string) {
+  const instance = editor.value
+  const selection = lastTextSelection.value
+  if (!instance || !selection) return null
+
+  const maxPosition = instance.state.doc.content.size
+  if (selection.from < 0 || selection.to > maxPosition || selection.from >= selection.to) {
+    return null
+  }
+
+  instance.chain().focus().setTextSelection({ from: selection.from, to: selection.to }).insertContent(html).run()
+  const nextHTML = instance.getHTML()
+  emit('update:modelValue', nextHTML)
+  lastTextSelection.value = null
+  emit('selectionChange', '')
+  return nextHTML
+}
+
+defineExpose({
+  getSelectedText,
+  replaceSelectionWithHTML,
+})
 </script>
 
 <template>

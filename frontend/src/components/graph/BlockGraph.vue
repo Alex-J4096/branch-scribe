@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
-import { ConnectionLineType, Handle, Position, VueFlow } from '@vue-flow/core'
+import { ConnectionLineType, Handle, isEdge, MarkerType, Position, VueFlow } from '@vue-flow/core'
 import type { Connection, Edge, Node, ValidConnectionFunc } from '@vue-flow/core'
 
 import { api } from '@/api/client'
@@ -18,6 +18,8 @@ const emit = defineEmits<{
 }>()
 
 const queryClient = useQueryClient()
+const flowNodes = ref<Node[]>([])
+const flowEdges = ref<Edge[]>([])
 const manualConnection = ref<{
   sourceId: string
   startX: number
@@ -26,8 +28,24 @@ const manualConnection = ref<{
   currentY: number
 } | null>(null)
 
-const nodes = computed<Node[]>(() =>
-  props.graph.nodes.map((block, index) => ({
+watch(
+  () => [props.graph.nodes, props.selectedBlockId] as const,
+  () => {
+    flowNodes.value = buildFlowNodes()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.graph.edges,
+  () => {
+    flowEdges.value = buildFlowEdges()
+  },
+  { immediate: true },
+)
+
+function buildFlowNodes(): Node[] {
+  return props.graph.nodes.map((block, index) => ({
     id: block.id,
     type: 'default',
     position: {
@@ -38,19 +56,42 @@ const nodes = computed<Node[]>(() =>
       label: `${block.title || `片段 #${index + 1}`} · ${block.type}`,
     },
     class: block.id === props.selectedBlockId ? 'story-node is-selected' : 'story-node',
-  })),
-)
+  }))
+}
 
-const edges = computed<Edge[]>(() =>
-  props.graph.edges.map((edge) => ({
+function buildFlowEdges(): Edge[] {
+  return props.graph.edges.map((edge) => ({
     id: edge.id,
+    type: 'smoothstep',
     source: edge.source_block_id,
     target: edge.target_block_id,
+    sourceHandle: 'source',
+    targetHandle: 'target',
     label: edge.label ?? edge.edge_type,
     animated: edge.edge_type === 'fork',
     class: `story-edge story-edge--${edge.edge_type}`,
-  })),
-)
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: edgeColor(edge.edge_type),
+      width: 20,
+      height: 20,
+      markerUnits: 'userSpaceOnUse',
+    },
+    style: {
+      stroke: edgeColor(edge.edge_type),
+      strokeWidth: 2.5,
+    },
+    labelBgStyle: {
+      fill: '#ffffff',
+      fillOpacity: 0.92,
+    },
+    labelStyle: {
+      fill: '#253241',
+      fontSize: 12,
+      fontWeight: 700,
+    },
+  }))
+}
 
 function canCreateNextConnection(connection: Connection) {
   if (!connection.source || !connection.target || connection.source === connection.target) return false
@@ -62,7 +103,17 @@ function canCreateNextConnection(connection: Connection) {
   )
 }
 
-const isValidConnection: ValidConnectionFunc = (connection) => canCreateNextConnection(connection)
+// Vue Flow 在两端调用这个校验：
+//   1. 用户从 handle 拖拽新建连线时，传入的是没有 id 的 Connection；
+//   2. setEdges 解析从后端加载的 edge 时，传入的是带 id 的既有 Edge。
+// 如果对已加载的 `next` edge 也跑重复校验，Vue Flow 会以
+// "An edge needs a source and a target" 丢弃它，导致画布上看不到箭头。
+// 因此：带 id 的既有 edge 一律放行；只对没有 id 的新建拖拽走重复校验。
+const isValidConnection: ValidConnectionFunc = (connection) => {
+  if (!connection.source || !connection.target || connection.source === connection.target) return false
+  if (isEdge(connection)) return true
+  return canCreateNextConnection(connection)
+}
 
 async function createDraggedEdge(connection: Connection) {
   if (!canCreateNextConnection(connection)) return
@@ -75,9 +126,26 @@ async function createDraggedEdge(connection: Connection) {
   await queryClient.invalidateQueries({ queryKey: ['graph', props.projectId] })
 }
 
+function edgeColor(edgeType: string) {
+  switch (edgeType) {
+    case 'fork':
+      return '#9b6b28'
+    case 'alternative':
+      return '#7a4fa3'
+    case 'references':
+      return '#466987'
+    case 'summarizes':
+      return '#607449'
+    case 'next':
+    default:
+      return '#2f7d76'
+  }
+}
+
 function beginManualConnection(event: PointerEvent, sourceId: string) {
   const target = event.currentTarget as HTMLElement
   const rect = target.getBoundingClientRect()
+  target.setPointerCapture?.(event.pointerId)
 
   manualConnection.value = {
     sourceId,
@@ -106,7 +174,7 @@ async function finishManualConnection(event: PointerEvent) {
   manualConnection.value = null
   if (!sourceId) return
 
-  const targetId = findBlockAtPoint(event.clientX, event.clientY)
+  const targetId = findBlockAtPoint(event.clientX, event.clientY, sourceId)
   if (!targetId) return
 
   await createDraggedEdge({ source: sourceId, target: targetId })
@@ -118,12 +186,12 @@ function cancelManualConnection() {
   manualConnection.value = null
 }
 
-function findBlockAtPoint(x: number, y: number) {
+function findBlockAtPoint(x: number, y: number, sourceId: string) {
   const elements = document.elementsFromPoint(x, y)
   for (const element of elements) {
     const node = element.closest<HTMLElement>('[data-block-id]')
     const blockId = node?.dataset.blockId
-    if (blockId && blockId !== manualConnection.value?.sourceId) {
+    if (blockId && blockId !== sourceId) {
       return blockId
     }
   }
@@ -132,7 +200,7 @@ function findBlockAtPoint(x: number, y: number) {
   let nearestDistance = Number.POSITIVE_INFINITY
   document.querySelectorAll<HTMLElement>('[data-block-id]').forEach((node) => {
     const blockId = node.dataset.blockId
-    if (!blockId || blockId === manualConnection.value?.sourceId) return
+    if (!blockId || blockId === sourceId) return
 
     const rect = node.getBoundingClientRect()
     const targetX = rect.left
@@ -162,8 +230,8 @@ async function updatePosition(event: { node: Node }) {
 <template>
   <VueFlow
     class="story-flow"
-    :nodes="nodes"
-    :edges="edges"
+    v-model:nodes="flowNodes"
+    v-model:edges="flowEdges"
     :fit-view-on-init="true"
     :min-zoom="0.35"
     :max-zoom="1.6"

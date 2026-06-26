@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ChevronDown, ChevronRight, CopyPlus, FileText, GitFork, Save, SquarePen } from 'lucide-vue-next'
+import { AlertCircle, Bot, Check, ChevronDown, ChevronRight, CopyPlus, FileText, GitFork, Save, Sparkles, SquarePen } from 'lucide-vue-next'
 
 import { api } from '@/api/client'
 import RichTextEditor from '@/components/editor/RichTextEditor.vue'
-import type { Revision } from '@/api/types'
+import type { GenerateOnceResult, ModelProfile, Revision } from '@/api/types'
 
 const props = defineProps<{
   projectId: string
@@ -22,15 +22,37 @@ const titleDraft = ref('')
 const forkTitle = ref('')
 const diffBaseRevisionId = ref('')
 const diffTargetRevisionId = ref('')
+const selectedModelProfileId = ref('')
+const generationTaskType = ref('continue')
+const generationInstruction = ref('')
+const generationSelectedText = ref('')
+const editorSelectedText = ref('')
+const generationResult = ref<GenerateOnceResult | null>(null)
+const streamingOutput = ref('')
+const generationError = ref('')
+const isGenerationStreaming = ref(false)
 const draftSavedAt = ref<string | null>(null)
 const restoredLocalDraft = ref(false)
 const openSections = ref({
   title: true,
   editor: true,
+  llm: false,
   fork: false,
   revisions: true,
 })
 let autosaveTimer: ReturnType<typeof window.setTimeout> | null = null
+let generationAbortController: AbortController | null = null
+const richTextEditorRef = ref<InstanceType<typeof RichTextEditor> | null>(null)
+
+const generationTasks = [
+  { value: 'free_write', label: '自由生成' },
+  { value: 'continue', label: '续写' },
+  { value: 'rewrite_block', label: '改写' },
+  { value: 'rewrite_selection', label: '局部改写' },
+  { value: 'expand', label: '扩写' },
+  { value: 'condense', label: '缩写' },
+  { value: 'polish', label: '润色' },
+]
 
 const blockQuery = useQuery({
   queryKey: computed(() => ['block', props.blockId]),
@@ -42,13 +64,45 @@ const revisionsQuery = useQuery({
   queryFn: () => api.listRevisions(props.blockId),
 })
 
+const modelProfilesQuery = useQuery({
+  queryKey: computed(() => ['model-profiles', props.projectId]),
+  queryFn: () => api.listModelProfiles(props.projectId),
+})
+
 const blockDetail = computed(() => blockQuery.data.value)
 const revisions = computed(() => revisionsQuery.data.value ?? [])
+const modelProfiles = computed(() => modelProfilesQuery.data.value ?? [])
 const currentRevision = computed(() => blockDetail.value?.current_revision ?? null)
 const displayTitle = computed(() => blockDetail.value?.block.title || '无标题片段')
 const isContentDirty = computed(() => draftContent.value !== (currentRevision.value?.content ?? ''))
 const wordCount = computed(() => countWords(stripHTML(draftContent.value)))
 const currentRevisionHash = computed(() => currentRevision.value?.content_hash?.slice(0, 10) ?? 'no hash')
+const selectedModelProfile = computed(
+  () => modelProfiles.value.find((profile) => profile.id === selectedModelProfileId.value) ?? null,
+)
+const selectedTextForGeneration = computed(() => {
+  if (generationTaskType.value !== 'rewrite_selection') {
+    return generationSelectedText.value.trim()
+  }
+  return (editorSelectedText.value || generationSelectedText.value).trim()
+})
+const canGenerate = computed(() => {
+  if (!selectedModelProfileId.value || !blockDetail.value) return false
+  if (generationTaskType.value === 'rewrite_selection') {
+    return Boolean(selectedTextForGeneration.value)
+  }
+  return true
+})
+const generatedRevisionContent = computed(() => {
+  const source = generationResult.value?.output_text || streamingOutput.value
+  if (!source) return ''
+  const output = textToHtml(source)
+  const taskType = generationResult.value?.generation_run.task_type ?? generationTaskType.value
+  if (taskType === 'continue' && draftContent.value.trim()) {
+    return `${draftContent.value.trim()}\n${output}`
+  }
+  return output
+})
 const draftStorageKey = computed(() => `branchscribe:draft:${props.projectId}:${props.blockId}`)
 const diffBaseRevision = computed(() => revisions.value.find((revision) => revision.id === diffBaseRevisionId.value) ?? null)
 const diffTargetRevision = computed(() => revisions.value.find((revision) => revision.id === diffTargetRevisionId.value) ?? null)
@@ -106,6 +160,29 @@ watch(
   { immediate: true },
 )
 
+watch(
+  modelProfiles,
+  (value) => {
+    if (selectedModelProfileId.value && value.some((profile) => profile.id === selectedModelProfileId.value)) {
+      return
+    }
+    selectedModelProfileId.value = value.find((profile) => profile.has_api_key)?.id ?? value[0]?.id ?? ''
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.blockId,
+  () => {
+    cancelGeneration()
+    generationResult.value = null
+    streamingOutput.value = ''
+    generationError.value = ''
+    generationSelectedText.value = ''
+    editorSelectedText.value = ''
+  },
+)
+
 const createRevision = useMutation({
   mutationFn: () =>
     api.createRevision(props.blockId, {
@@ -117,6 +194,42 @@ const createRevision = useMutation({
   onSuccess: async () => {
     clearLocalDraft()
     await refreshInspector()
+  },
+})
+
+const saveGeneratedRevision = useMutation({
+  mutationFn: () => {
+    if (!generationResult.value) {
+      throw new Error('没有可保存的生成结果')
+    }
+    const content = generationResult.value.generation_run.task_type === 'rewrite_selection'
+      ? replaceEditorSelectionWithGeneratedContent()
+      : generatedRevisionContent.value
+
+    return api.createRevision(props.blockId, {
+      parent_revision_id: currentRevision.value?.id ?? null,
+      content,
+      content_format: 'html',
+      source: 'llm',
+      generation_run_id: generationResult.value.generation_run.id,
+      metadata: {
+        task_type: generationResult.value.generation_run.task_type,
+        model_profile_id: generationResult.value.model_profile_id,
+        prompt_template_id: generationResult.value.prompt_template_id,
+      },
+      set_current: true,
+    })
+  },
+  onSuccess: async () => {
+    generationResult.value = null
+    streamingOutput.value = ''
+    generationError.value = ''
+    generationSelectedText.value = ''
+    clearLocalDraft()
+    await refreshInspector()
+  },
+  onError: (error) => {
+    generationError.value = error instanceof Error ? error.message : '保存生成结果失败'
   },
 })
 
@@ -159,6 +272,7 @@ onBeforeUnmount(() => {
   if (autosaveTimer) {
     window.clearTimeout(autosaveTimer)
   }
+  cancelGeneration()
 })
 
 function revisionLabel(revision: Revision) {
@@ -181,6 +295,33 @@ function countWords(value: string) {
   const cjkMatches = value.match(/[\u4e00-\u9fff]/g) ?? []
   const wordMatches = value.replace(/[\u4e00-\u9fff]/g, ' ').match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g) ?? []
   return cjkMatches.length + wordMatches.length
+}
+
+function modelProfileLabel(profile: ModelProfile) {
+  return `${profile.name} · ${profile.provider} · ${profile.model}`
+}
+
+function textToHtml(value: string) {
+  const paragraphs = value
+    .trim()
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+
+  if (paragraphs.length === 0) {
+    return '<p></p>'
+  }
+
+  return paragraphs.map((paragraph) => `<p>${escapeHTML(paragraph).replace(/\n/g, '<br>')}</p>`).join('\n')
+}
+
+function escapeHTML(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function tokenize(value: string) {
@@ -298,6 +439,89 @@ function formatDraftTime(value: string) {
 function toggleSection(section: keyof typeof openSections.value) {
   openSections.value[section] = !openSections.value[section]
 }
+
+async function startGenerationStream() {
+  if (!canGenerate.value || isGenerationStreaming.value) return
+
+  const selectedText = selectedTextForGeneration.value
+  if (generationTaskType.value === 'rewrite_selection' && !selectedText) {
+    generationError.value = '请先在正文编辑器中选中需要局部改写的文本'
+    return
+  }
+
+  generationAbortController = new AbortController()
+  isGenerationStreaming.value = true
+  generationError.value = ''
+  generationResult.value = null
+  streamingOutput.value = ''
+
+  try {
+    await api.generateStream(
+      {
+        project_id: props.projectId,
+        block_id: props.blockId,
+        task_type: generationTaskType.value,
+        model_profile_id: selectedModelProfileId.value,
+        selected_text: selectedText,
+        user_instruction: generationInstruction.value.trim(),
+      },
+      (event) => {
+        if (event.type === 'delta') {
+          streamingOutput.value += event.content ?? ''
+          return
+        }
+        if (event.type === 'done' && event.generation_run) {
+          generationResult.value = {
+            output_text: streamingOutput.value,
+            generation_run: event.generation_run,
+            prompt: event.prompt ?? '',
+            model_profile_id: event.model_profile_id ?? selectedModelProfileId.value,
+            prompt_template_id: event.prompt_template_id ?? null,
+          }
+          return
+        }
+        if (event.type === 'error') {
+          generationError.value = event.error ?? '生成失败'
+        }
+      },
+      generationAbortController.signal,
+    )
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      generationError.value = '生成已取消'
+    } else {
+      generationError.value = error instanceof Error ? error.message : '生成失败'
+    }
+  } finally {
+    isGenerationStreaming.value = false
+    generationAbortController = null
+  }
+}
+
+function cancelGeneration() {
+  if (generationAbortController) {
+    generationAbortController.abort()
+    generationAbortController = null
+  }
+}
+
+function handleEditorSelectionChange(value: string) {
+  editorSelectedText.value = value
+  if (value) {
+    generationSelectedText.value = value
+  }
+}
+
+function replaceEditorSelectionWithGeneratedContent() {
+  const output = generationResult.value?.output_text ?? ''
+  const replacementHTML = textToHtml(output)
+  const replaced = richTextEditorRef.value?.replaceSelectionWithHTML(replacementHTML)
+  if (!replaced) {
+    throw new Error('选区已失效，请重新选中文本后保存生成结果')
+  }
+  draftContent.value = replaced
+  return replaced
+}
 </script>
 
 <template>
@@ -343,7 +567,12 @@ function toggleSection(section: keyof typeof openSections.value) {
         <div v-show="openSections.editor" class="inspector-section__body">
           <div class="editor-field">
             <span>正文 · {{ wordCount }} 字 · {{ isContentDirty ? '未保存' : '当前 revision' }}</span>
-            <RichTextEditor v-model="draftContent" :content-format="currentRevision?.content_format" />
+            <RichTextEditor
+              ref="richTextEditorRef"
+              v-model="draftContent"
+              :content-format="currentRevision?.content_format"
+              @selection-change="handleEditorSelectionChange"
+            />
           </div>
 
           <div class="revision-status">
@@ -359,6 +588,89 @@ function toggleSection(section: keyof typeof openSections.value) {
               保存 Revision
             </button>
             <button v-if="draftSavedAt" class="button" type="button" @click="discardDraft">丢弃草稿</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="inspector-section">
+        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('llm')">
+          <span>
+            <ChevronDown v-if="openSections.llm" :size="16" aria-hidden="true" />
+            <ChevronRight v-else :size="16" aria-hidden="true" />
+            <h2>LLM 操作</h2>
+          </span>
+          <Bot :size="16" aria-hidden="true" />
+        </button>
+        <div v-show="openSections.llm" class="inspector-section__body llm-panel">
+          <label class="field-label">
+            <span>模型</span>
+            <select v-model="selectedModelProfileId">
+              <option value="" disabled>选择模型配置</option>
+              <option v-for="profile in modelProfiles" :key="profile.id" :value="profile.id">
+                {{ modelProfileLabel(profile) }}
+              </option>
+            </select>
+          </label>
+
+          <div class="llm-task-grid" role="group" aria-label="LLM task type">
+            <button
+              v-for="task in generationTasks"
+              :key="task.value"
+              class="button"
+              :class="{ 'button--primary': generationTaskType === task.value }"
+              type="button"
+              @click="generationTaskType = task.value"
+            >
+              {{ task.label }}
+            </button>
+          </div>
+
+          <label v-if="generationTaskType === 'rewrite_selection'" class="field-label">
+            <span>选中文本</span>
+            <textarea v-model="generationSelectedText" rows="4" placeholder="在正文编辑器中选中文本后会自动带入" />
+          </label>
+
+          <label class="field-label">
+            <span>用户指令</span>
+            <textarea v-model="generationInstruction" rows="3" placeholder="补充风格、方向、限制或人物语气" />
+          </label>
+
+          <div v-if="!modelProfiles.length" class="llm-message llm-message--warning">
+            <AlertCircle :size="16" aria-hidden="true" />
+            <span>还没有模型配置，请先在模型设置中创建一个可用 profile。</span>
+          </div>
+          <div v-else-if="selectedModelProfile && !selectedModelProfile.has_api_key" class="llm-message llm-message--warning">
+            <AlertCircle :size="16" aria-hidden="true" />
+            <span>当前模型没有 API key 环境变量引用，生成请求会失败。</span>
+          </div>
+          <div v-if="generationError" class="llm-message llm-message--error">
+            <AlertCircle :size="16" aria-hidden="true" />
+            <span>{{ generationError }}</span>
+          </div>
+
+          <div class="inspector__actions">
+            <button class="button button--primary" type="button" :disabled="!canGenerate || isGenerationStreaming" @click="startGenerationStream">
+              <Sparkles :size="16" aria-hidden="true" />
+              {{ isGenerationStreaming ? '生成中' : '流式生成' }}
+            </button>
+            <button v-if="isGenerationStreaming" class="button" type="button" @click="cancelGeneration">
+              取消
+            </button>
+          </div>
+
+          <div v-if="generationResult || streamingOutput" class="llm-output">
+            <div class="llm-output__meta">
+              <span>{{ generationResult?.generation_run.model ?? selectedModelProfile?.model ?? 'streaming' }}</span>
+              <span v-if="generationResult">{{ generationResult.generation_run.output_tokens }} output tokens</span>
+              <span v-else>streaming</span>
+            </div>
+            <div class="llm-output__text">{{ generationResult?.output_text ?? streamingOutput }}</div>
+            <div class="inspector__actions">
+              <button class="button button--primary" type="button" :disabled="!generationResult || saveGeneratedRevision.isPending.value" @click="saveGeneratedRevision.mutate()">
+                <Check :size="16" aria-hidden="true" />
+                {{ generationResult?.generation_run.task_type === 'rewrite_selection' ? '替换选区并保存' : '保存为 Revision' }}
+              </button>
+            </div>
           </div>
         </div>
       </section>

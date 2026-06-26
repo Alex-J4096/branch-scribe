@@ -3,6 +3,8 @@ package modelprofile
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -11,6 +13,8 @@ var (
 	ErrInvalidModelProfile  = errors.New("invalid model profile")
 	ErrModelProfileNotFound = errors.New("model profile not found")
 )
+
+var envVarNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type ModelProfile struct {
 	ID            string          `json:"id"`
@@ -86,6 +90,19 @@ func normalizeOptionalString(value *string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func normalizeAPIKeyRef(value *string) (*string, error) {
+	value = normalizeOptionalString(value)
+	if value == nil {
+		return nil, nil
+	}
+	envName := strings.TrimPrefix(*value, "env:")
+	if !envVarNamePattern.MatchString(envName) {
+		return nil, fmt.Errorf("%w: api key must be an environment variable name", ErrInvalidModelProfile)
+	}
+	ref := "env:" + envName
+	return &ref, nil
 }
 
 func normalizeJSON(raw json.RawMessage) json.RawMessage {

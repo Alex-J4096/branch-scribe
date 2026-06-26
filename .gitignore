@@ -10,3 +10,6 @@ coverage.out
 node_modules/
 dist/
 *.tsbuildinfo
+
+# DevOps
+start.sh

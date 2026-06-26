@@ -15,9 +15,11 @@ import (
 	"branchscribe/backend/internal/branch"
 	"branchscribe/backend/internal/config"
 	"branchscribe/backend/internal/database"
+	"branchscribe/backend/internal/generation"
 	"branchscribe/backend/internal/graph"
 	"branchscribe/backend/internal/modelprofile"
 	"branchscribe/backend/internal/project"
+	"branchscribe/backend/internal/prompttemplate"
 )
 
 func main() {
@@ -41,6 +43,8 @@ func main() {
 	block.RegisterRoutes(apiGroup, block.NewHandler(block.NewRepository(db)))
 	graph.RegisterRoutes(apiGroup, graph.NewHandler(graph.NewRepository(db)))
 	modelprofile.RegisterRoutes(apiGroup, modelprofile.NewHandler(modelprofile.NewRepository(db)))
+	prompttemplate.RegisterRoutes(apiGroup, prompttemplate.NewHandler(prompttemplate.NewRepository(db)))
+	generation.RegisterRoutes(apiGroup, generation.NewHandler(generation.NewRepository(db), generation.NewOpenAICompatibleProvider()))
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,

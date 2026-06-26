@@ -50,7 +50,7 @@ MVP 阶段暂不做：
 * EPUB 高级排版。
 * 复杂 Agent 自动写完整本小说。
 
-项目优先使用服务商 API，例如 OpenAI-compatible API、OpenAI、Anthropic、Google、DeepSeek、Moonshot、OpenRouter 等。
+项目优先使用服务商 API，例如 OpenAI-compatible API、OpenAI、Anthropic、Google、DeepSeek、Moonshot、OpenRouter、SiliconFlow 等。
 
 ---
 
@@ -618,7 +618,16 @@ Context Builder 需要根据 task_type 决定上下文策略。
 
 MVP 阶段支持以下任务：
 
-### 8.1 continue
+### 8.1 free_write
+
+完全根据用户指令生成正文，不读取当前 block 正文。
+
+上下文应包含：
+
+* 项目简介
+* 用户指令
+
+### 8.2 continue
 
 续写当前 block 或从当前 block 创建下一个 block。
 
@@ -633,7 +642,7 @@ MVP 阶段支持以下任务：
 * 相关世界规则
 * 用户指令
 
-### 8.2 rewrite_block
+### 8.3 rewrite_block
 
 重写整个 block。
 
@@ -645,7 +654,7 @@ MVP 阶段支持以下任务：
 * 不能改变的 canon facts
 * 风格要求
 
-### 8.3 rewrite_selection
+### 8.4 rewrite_selection
 
 局部修改。
 
@@ -666,19 +675,19 @@ MVP 阶段支持以下任务：
 }
 ```
 
-### 8.4 expand
+### 8.5 expand
 
 扩写当前 block 或选中片段。
 
-### 8.5 condense
+### 8.6 condense
 
 压缩当前 block 或选中片段。
 
-### 8.6 polish
+### 8.7 polish
 
 润色语言，不改变剧情事实。
 
-### 8.7 compare_revisions
+### 8.8 compare_revisions
 
 比较两个 revision。
 
@@ -771,6 +780,8 @@ type LLMProvider interface {
 * top_p
 * max_tokens
 * stream
+
+Provider 列表包含 OpenAI-compatible、OpenAI、OpenRouter、DeepSeek、Moonshot、SiliconFlow 等。
 
 前端允许用户创建多个 model profile。
 
@@ -1012,7 +1023,17 @@ PATCH  /api/canon/:entityId
 DELETE /api/canon/:entityId
 ```
 
-### 12.7 Memory API
+### 12.7 Prompt Template API
+
+```http
+GET    /api/projects/:projectId/prompt-templates
+POST   /api/projects/:projectId/prompt-templates
+GET    /api/prompt-templates/:templateId
+PATCH  /api/prompt-templates/:templateId
+DELETE /api/prompt-templates/:templateId
+```
+
+### 12.8 Memory API
 
 ```http
 GET    /api/projects/:projectId/memory
@@ -1301,6 +1322,8 @@ branchscribe/
 * [x] 支持创建 block。
 * [x] 支持 block 列表管理、快速选择和删除。
 * [x] 支持通过节点边缘热区拖拽吸附创建 edge，保留表单创建作为备用。
+* [x] graph edge 在画布上以可见线条、箭头和标签展示。
+* [x] 拖动 block 后 graph edge 保持可见并跟随节点位置更新。
 * [x] 左右菜单支持抽屉式收起和展开。
 * [x] 抽屉中的工作区和 inspector 功能组可以独立收起。
 * [x] 点击 block 后在右侧显示详情。
@@ -1371,19 +1394,20 @@ branchscribe/
 ### 后端任务
 
 * [x] 实现 Model Profile CRUD。
-* [ ] 实现 Prompt Template CRUD。
-* [ ] 实现 OpenAI-compatible Provider。
-* [ ] 实现 GenerateOnce。
-* [ ] 实现 GenerateStream。
-* [ ] 实现 SSE 或 WebSocket 流式输出。
-* [ ] 实现 generation run 记录。
-* [ ] 实现 LLM 输出保存为新 revision。
-* [ ] 实现任务类型：continue。
-* [ ] 实现任务类型：rewrite_block。
-* [ ] 实现任务类型：rewrite_selection。
-* [ ] 实现任务类型：expand。
-* [ ] 实现任务类型：condense。
-* [ ] 实现任务类型：polish。
+* [x] 实现 Prompt Template CRUD。
+* [x] 实现 OpenAI-compatible Provider。
+* [x] 实现 GenerateOnce。
+* [x] 实现 GenerateStream。
+* [x] 实现 SSE 或 WebSocket 流式输出。
+* [x] 实现 generation run 记录。
+* [x] 实现 LLM 输出保存为新 revision。
+* [x] 实现任务类型：free_write。
+* [x] 实现任务类型：continue。
+* [x] 实现任务类型：rewrite_block。
+* [x] 实现任务类型：rewrite_selection。
+* [x] 实现任务类型：expand。
+* [x] 实现任务类型：condense。
+* [x] 实现任务类型：polish。
 
 ### 前端任务
 
@@ -1393,28 +1417,28 @@ branchscribe/
 * [x] 支持配置 top_p。
 * [x] 支持配置 max_tokens。
 * [x] 支持配置 context_window。
-* [ ] 在 block inspector 中添加 LLM 操作按钮。
-* [ ] 实现用户指令输入框。
-* [ ] 实现流式输出显示。
-* [ ] 生成完成后允许保存为新 revision。
-* [ ] 支持局部选中文本后执行 rewrite_selection。
+* [x] 在 block inspector 中添加 LLM 操作按钮。
+* [x] 实现用户指令输入框。
+* [x] 实现流式输出显示。
+* [x] 生成完成后允许保存为新 revision。
+* [x] 支持局部选中文本后执行 rewrite_selection。
 
 ### 安全任务
 
 * [x] API key 不返回给前端。
-* [ ] API key 在数据库中加密存储，或 MVP 阶段仅使用环境变量。
-* [ ] 对 LLM 请求做超时控制。
-* [ ] 对服务商 API 错误做清晰提示。
+* [x] API key 在数据库中加密存储，或 MVP 阶段仅使用环境变量。
+* [x] 对 LLM 请求做超时控制。
+* [x] 对服务商 API 错误做清晰提示。
 
 ### 验收标准
 
 * [x] 用户可以配置一个 OpenAI-compatible 模型。
-* [ ] 用户可以对 block 执行续写。
-* [ ] 用户可以对 block 执行改写。
-* [ ] 用户可以选中文本执行局部修改。
-* [ ] LLM 输出可以流式显示。
-* [ ] 生成结果可以保存为新 revision。
-* [ ] 每次 LLM 调用都有 generation run 记录。
+* [x] 用户可以通过 API 对 block 执行续写。
+* [x] 用户可以通过 API 对 block 执行改写。
+* [x] 用户可以选中文本执行局部修改。
+* [x] LLM 输出可以流式显示。
+* [x] 生成结果可以保存为新 revision。
+* [x] 每次 LLM 调用都有 generation run 记录。
 
 ---
 

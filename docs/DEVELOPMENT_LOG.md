@@ -224,3 +224,147 @@
 - 收起左右抽屉后画布自动扩展，便于在图上管理 block 和拖拽连接。
 - 运行 `npm run typecheck`、`npm run build` 和 `go test ./...`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
 - 更新 `ARCHITECTURE.md` 中 Phase 1 的抽屉式菜单和功能组折叠任务。
+
+### Step 24: 实现 Prompt Template CRUD
+
+- 新增 `backend/internal/prompttemplate` 包，实现 Prompt Template 的 list/create/get/update/delete。
+- 新增 API 路由：
+  - `GET /api/projects/:projectId/prompt-templates`
+  - `POST /api/projects/:projectId/prompt-templates`
+  - `GET /api/prompt-templates/:templateId`
+  - `PATCH /api/prompt-templates/:templateId`
+  - `DELETE /api/prompt-templates/:templateId`
+- 列表接口支持通过 `task_type` query 参数过滤。
+- 创建或更新默认模板时，会取消同项目同 `task_type` 下其他模板的默认状态，避免默认模板歧义。
+- 前端 API client 新增 Prompt Template 类型和 list/create/get/update/delete 方法，供后续生成界面复用。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 3 的 Prompt Template CRUD 任务和 API 路由列表。
+
+### Step 25: 实现 OpenAI-compatible GenerateOnce
+
+- 新增 `backend/internal/generation` 包，实现一次性非流式生成链路。
+- 新增 `POST /api/generate/once` API，输入 project、block、task_type、model_profile 和可选 prompt_template。
+- 实现 OpenAI-compatible provider，按 Chat Completions 兼容格式请求 `POST {base_url}/chat/completions`，发送 messages、temperature、top_p 和 max_tokens。
+- 生成前读取 Model Profile、当前 block 的 current revision 和 Prompt Template；未指定模板时优先使用同 task_type 默认模板，否则使用内置任务模板。
+- 内置模板覆盖 continue、rewrite_block、rewrite_selection、expand、condense 和 polish。
+- 每次调用都会创建 `generation_runs` 记录，成功后写入 succeeded、token usage 和 latency，失败后写入 failed 和 provider 错误信息。
+- LLM 请求使用 60 秒 timeout，provider 非 2xx 或异常响应会转成清晰错误。
+- 前端 API client 新增 GenerateOnce 类型和 `generateOnce` 方法，供后续 inspector 操作面板复用。
+- 为 OpenAI-compatible provider 增加成功响应和 provider 错误解析单元测试。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 3 的 provider、GenerateOnce、generation run、任务类型、timeout 和 provider error 任务。
+
+### Step 26: 增加 SiliconFlow Provider 选项
+
+- 在 Model Profile 的 provider 枚举中加入 `siliconflow`。
+- 更新数据库初始化 schema 中的 `model_profiles_provider_check` 约束。
+- 更新运行中的 `branchscribe-postgres` 数据库约束，允许保存 SiliconFlow provider。
+- 模型配置页面的 Provider 下拉框新增 SiliconFlow。
+- 模型配置页面根据所选 Provider 自动预填默认 Base URL；已有自定义 Base URL 时不会覆盖。
+- GenerateOnce 将 `siliconflow` 作为 OpenAI-compatible provider 处理，复用现有 Chat Completions 兼容调用链路。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- Base URL 自动预填改动再次运行 `npm run typecheck` 和 `npm run build`，均通过。
+- 更新 `ARCHITECTURE.md` 中服务商范围和 MVP Provider 支持项。
+
+### Step 27: 接入 Block Inspector LLM 操作面板
+
+- 在 Block Inspector 中新增可折叠的 LLM 操作面板，支持选择 Model Profile、选择任务类型、填写用户指令并触发一次性生成。
+- 任务按钮覆盖续写、改写、局部改写、扩写、缩写和润色；局部改写暂时提供手动粘贴选中文本的输入框。
+- 生成结果先在 inspector 中预览，不会直接覆盖正文。
+- 保存生成结果时创建 `source=llm` 的新 revision，并写入 `generation_run_id` 和任务 metadata。
+- 后端创建带 `generation_run_id` 的 revision 时，会回填 `generation_runs.output_revision_id`，保证调用记录和产出 revision 可追溯。
+- 续写任务保存时会追加到当前草稿正文后；其他任务保存时使用生成结果作为新 revision 正文。
+- 运行 `npm run typecheck`、`npm run build` 和 `go test ./...`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 3 的 inspector LLM 按钮、用户指令输入、生成结果保存和 LLM 输出保存为 revision 任务。
+
+### Step 28: 增加自由生成任务
+
+- 新增 LLM 任务类型 `free_write`，前端显示为“自由生成”。
+- `free_write` 的内置 prompt 只使用项目简介和用户指令，不引用当前 block 正文。
+- 后端为 `free_write` 使用轻量 block metadata context，只读取项目描述和 block 标题，不读取 current revision 内容。
+- 保存 `free_write` 结果时与改写类任务一致，生成内容会作为新的 `llm` revision 正文。
+- 更新前端 Prompt Template 类型，允许 `free_write` task_type。
+- 更新 `ARCHITECTURE.md` 中 LLM 任务类型说明和 Phase 3 任务清单。
+
+### Step 29: 修复 Graph Edge 可见性与拖拽连接
+
+- 修复 block 节点 handle 被 CSS `pointer-events: none` 禁用的问题，恢复 Vue Flow 原生连接点交互。
+- 为 Vue Flow edge 明确设置 `smoothstep` 类型、source/target handle、箭头 marker、线条宽度和 label 样式。
+- 补充不同 edge_type 的可见颜色，菜单创建 edge 后能在画布上明确看到连接线、箭头和标签。
+- 修复自定义拖拽吸附逻辑中松手查找目标时丢失 source block 的问题，避免最近目标误判。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 1 graph edge 可见性任务。
+
+### Step 30: 修复拖动 Block 后 Edge 消失
+
+- 将 `BlockGraph` 的 Vue Flow nodes/edges 从 computed prop 改为本地 `v-model:nodes` 和 `v-model:edges` 状态。
+- 拖动节点时 Vue Flow 现在会直接更新本地 node 状态，不再与每次渲染重新生成的 computed nodes/edges 互相覆盖。
+- 外部 graph 数据刷新时仍会同步回本地 nodes/edges，保留后端位置持久化后的最终状态。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+
+### Step 31: 修复 Block 间连接箭头不可见
+
+- 定位到根因：`BlockGraph.vue` 的 `isValidConnection` 直接复用了 `canCreateNextConnection`，它会拒绝任何已存在同向 `next` edge 的连接。
+- Vue Flow 在 `setEdges`（加载后端已有 edge）阶段也会调用 `isValidConnection`，于是每条从后端回来的 `next` edge 都被自己判为重复连接，触发 `EDGE_INVALID`，画布上完全渲染不出箭头，控制台只留下 `An edge needs a source and a target` 警告。
+- 重写 `isValidConnection`：先用 `isEdge(connection)` 区分“带 id 的既有 edge”和“新建拖拽 Connection”；既有 edge 一律放行，只有真正的拖拽才走 `canCreateNextConnection` 的重复校验，保留新建连线的去重逻辑。
+- 同步将 `markerEnd` 从默认的 `MarkerType.ArrowClosed` 改为带颜色对象，箭头填色与线条颜色一致，避免 Vue Flow 默认箭头使用灰色 `#b1b1b7`。
+- 通过 headless Chrome 连接 dev server 验证：修复前 `.vue-flow__edge` 元素数为 0、控制台报 `An edge needs a source and a target`；修复后画布上能看到一条 `vue-flow__edge-smoothstep` 路径、`next` 标签和 `#2f7d76` 颜色的闭合箭头。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+
+### Step 32: 实现 LLM 流式生成与 SSE 输出
+
+- 扩展 OpenAI-compatible provider，新增 `GenerateStream`，按 Chat Completions SSE 格式发送 `stream=true` 请求并解析 `delta`、`usage` 和 `[DONE]`。
+- 新增 `POST /api/generate/stream`，生成开始前创建 `generation_runs` running 记录，流式结束后更新为 succeeded，失败时更新为 failed。
+- SSE 输出统一发送 JSON 事件：`delta`、`done`、`error`；`done` 事件返回 generation run、prompt、model profile 和 prompt template 信息，供前端保存 revision 时追溯。
+- 前端 API client 新增 `generateStream`，使用 `fetch` + `ReadableStream` 解析 SSE。
+- Block Inspector 的生成按钮改为流式生成，生成文本会增量显示，完成后才允许保存为新的 `llm` revision；生成中支持取消当前请求。
+- 为 OpenAI-compatible provider 增加流式响应单元测试，覆盖 delta 拼接和 token usage 解析。
+- 运行 `npm run typecheck`、`npm run build` 和 `go test ./...`，均通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 3 的 GenerateStream、SSE 流式输出和前端流式显示任务。
+
+### Step 33: 修复前端 SSE 事件解析
+
+- 修复流式生成时报 `Unexpected non-whitespace character after JSON` 的问题。
+- 根因是前端 SSE 解析按 chunk 做整体拆分，遇到 CRLF 空行分隔、多个事件粘在同一 chunk 或换行符落在 chunk 边界时，可能把多条 `data:` 拼成一个 JSON 解析。
+- 将事件解析改为行状态机：逐行收集 `data:`，遇到空行才解析并派发一个 SSE event。
+- 支持 `\n`、`\r\n` 和 `\r` 换行，并允许 `data:` 行前存在空白。
+- 解析失败时返回更明确的 `INVALID_STREAM_EVENT` 错误，便于定位异常 payload。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+
+### Step 34: 重启后端使流式生成路由生效
+
+- 定位到浏览器控制台 `POST /api/generate/stream 404` 的根因：8080 端口运行的是旧后端进程，尚未加载 Step 32 新增的流式生成路由。
+- 停止旧的 `server` 进程，并用当前代码重新启动后端。
+- 启动日志确认已注册 `POST /api/generate/stream`。
+- 使用空 JSON 请求验证 `/api/generate/stream` 返回 `400 INVALID_GENERATION_REQUEST` 而不是 404，说明路由已生效。
+
+### Step 35: 移除流式生成 60 秒硬超时
+
+- 修复流式生成较慢时被 `context deadline exceeded` 强制截断的问题。
+- 移除 `GenerateStream` handler 中包裹 provider 请求的 `context.WithTimeout(60s)`，流式生成现在随浏览器请求取消或连接断开而停止。
+- 移除 OpenAI-compatible provider 的 `http.Client{Timeout: 60s}` 全局超时，避免流式响应被 HTTP client 截断。
+- 非流式 `GenerateOnce` 仍保留 handler 层 60 秒 timeout，用于普通一次性请求的错误控制。
+- 运行 `go test ./...`，后端测试通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行。
+- 重启后端以加载本次超时修复。
+
+### Step 36: 支持选中文本执行局部改写
+
+- `RichTextEditor` 新增选区捕获能力，Tiptap selection 变化时会把当前选中文本传给 Block Inspector。
+- `RichTextEditor` 暴露 `replaceSelectionWithHTML`，用于把 LLM 生成结果替换回上次正文选区。
+- Block Inspector 的 `rewrite_selection` 任务自动使用正文编辑器中的选中文本作为 `selected_text`，没有选区时禁止生成并提示用户。
+- `rewrite_selection` 生成完成后，保存按钮改为“替换选区并保存”，会先替换编辑器选区，再创建新的 `source=llm` revision。
+- 切换 block 时会清理选区和生成状态，避免旧选区串到新 block。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 3 的局部选中文本任务和验收项。
+
+### Step 37: Phase 3 API Key 改为环境变量引用
+
+- 完成 Phase 3 安全项：MVP 阶段不再把 API key 明文保存到数据库。
+- Model Profile 写入 API key 时只接受环境变量名，并保存为 `env:<VAR_NAME>` 形式的 `api_key_ref`。
+- 生成请求读取 Model Profile 时会解析 `env:<VAR_NAME>` 并从进程环境变量中读取真实 API key；缺失时返回清晰的 invalid generation request 错误。
+- Model Profile 列表和详情只有在 `api_key_ref` 是 `env:` 引用时才显示 `has_api_key=true`，旧明文遗留值不会再被当作有效配置。
+- 前端模型配置页将 API key 输入改为“API key 环境变量”，并更新 `.env.example` 示例。
+- 初始化 schema 增加 `model_profiles_api_key_ref_check`，限制 `api_key_ref` 只能为空或 `env:` 引用。
+- 同步运行中的 `branchscribe-postgres`：清理 1 条旧的非 env API key 引用，并添加 `model_profiles_api_key_ref_check` 约束。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md`，Phase 3 所有任务和验收项已完成。

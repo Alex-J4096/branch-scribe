@@ -281,6 +281,16 @@ func (r *Repository) CreateRevision(ctx context.Context, blockID string, req Cre
 		return Revision{}, err
 	}
 
+	if req.GenerationRunID != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE generation_runs
+			SET output_revision_id = $1
+			WHERE id = $2 AND block_id = $3
+		`, revision.ID, *req.GenerationRunID, blockID); err != nil {
+			return Revision{}, err
+		}
+	}
+
 	if req.SetCurrent == nil || *req.SetCurrent {
 		if _, err := tx.Exec(ctx, `UPDATE blocks SET current_revision_id = $1 WHERE id = $2`, revision.ID, blockID); err != nil {
 			return Revision{}, err
