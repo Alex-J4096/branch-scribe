@@ -101,6 +101,18 @@ export type CanonEntity = {
   updated_at: string
 }
 
+export type MemoryChunk = {
+  id: string
+  project_id: string
+  source_type: string
+  source_id: string | null
+  chunk_text: string
+  chunk_kind: string
+  tags: string[]
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
 export type ModelProfile = {
   id: string
   project_id: string | null
@@ -205,6 +217,12 @@ export type CreateRevisionInput = {
   set_current?: boolean
 }
 
+export type BlockAssociationsInput = {
+  character_ids?: string[]
+  location_id?: string | null
+  tags?: string[]
+}
+
 export type CanonEntityInput = {
   type: CanonEntity['type']
   name: string
@@ -213,6 +231,21 @@ export type CanonEntityInput = {
   attributes?: Record<string, unknown>
   importance?: number
   status?: CanonEntity['status']
+}
+
+export type MemoryChunkInput = {
+  source_type: string
+  source_id?: string | null
+  chunk_text: string
+  chunk_kind: string
+  tags?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export type MemoryChunkFromBlockInput = {
+  chunk_kind?: string
+  tags?: string[]
+  metadata?: Record<string, unknown>
 }
 
 export type ModelProfileInput = {

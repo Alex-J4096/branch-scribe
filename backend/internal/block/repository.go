@@ -152,6 +152,51 @@ func (r *Repository) Update(ctx context.Context, blockID string, req UpdateBlock
 	return newBlock, nil
 }
 
+func (r *Repository) UpdateAssociations(ctx context.Context, blockID string, req UpdateBlockAssociationsRequest) (Block, error) {
+	characterIDs := normalizeStringList(req.CharacterIDs)
+	tags := normalizeStringList(req.Tags)
+	locationID := normalizeOptionalTitle(req.LocationID)
+
+	metadataPatch := map[string]any{
+		"character_ids": characterIDs,
+		"tags":          tags,
+	}
+	if locationID == nil {
+		metadataPatch["location_id"] = nil
+	} else {
+		metadataPatch["location_id"] = *locationID
+	}
+
+	patchJSON, err := json.Marshal(metadataPatch)
+	if err != nil {
+		return Block{}, err
+	}
+
+	newBlock, err := scanBlock(r.db.QueryRow(ctx, `
+		UPDATE blocks
+		SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+		WHERE id = $2
+		RETURNING
+			id::text,
+			project_id::text,
+			branch_id::text,
+			type,
+			title,
+			current_revision_id::text,
+			parent_block_id::text,
+			position_x,
+			position_y,
+			order_index,
+			metadata,
+			created_at,
+			updated_at
+	`, patchJSON, blockID))
+	if err != nil {
+		return Block{}, normalizeNotFound(err)
+	}
+	return newBlock, nil
+}
+
 func (r *Repository) Delete(ctx context.Context, blockID string) error {
 	tag, err := r.db.Exec(ctx, `DELETE FROM blocks WHERE id = $1`, blockID)
 	if err != nil {

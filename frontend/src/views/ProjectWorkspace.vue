@@ -3,11 +3,14 @@ import { computed, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   ArrowLeft,
+  BookOpen,
   ChevronDown,
   ChevronRight,
+  Database,
   GitBranch,
   Layers3,
   Link2,
+  MapPin,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -196,6 +199,22 @@ async function refreshWorkspace() {
       <button class="button" type="button" @click="router.push({ name: 'model-profiles', params: { projectId } })">
         <Settings :size="16" aria-hidden="true" />
         模型
+      </button>
+      <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'character' } })">
+        <BookOpen :size="16" aria-hidden="true" />
+        角色
+      </button>
+      <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'location' } })">
+        <MapPin :size="16" aria-hidden="true" />
+        地点
+      </button>
+      <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'rule' } })">
+        <Layers3 :size="16" aria-hidden="true" />
+        规则
+      </button>
+      <button class="button" type="button" @click="router.push({ name: 'memory-manager', params: { projectId } })">
+        <Database :size="16" aria-hidden="true" />
+        Memory
       </button>
     </header>
 

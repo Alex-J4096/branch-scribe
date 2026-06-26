@@ -97,6 +97,10 @@ func (r *Repository) GetBlockContext(ctx context.Context, projectID string, bloc
 	if contentFormat.Valid {
 		blockContext.ContentFormat = contentFormat.String
 	}
+	blockContext.CanonFacts, err = r.ListBlockCanonFacts(ctx, projectID, blockID)
+	if err != nil {
+		return BlockContext{}, err
+	}
 	return blockContext, nil
 }
 
@@ -119,7 +123,76 @@ func (r *Repository) GetBlockMetadataContext(ctx context.Context, projectID stri
 	if title.Valid {
 		blockContext.BlockTitle = &title.String
 	}
+	blockContext.CanonFacts, err = r.ListBlockCanonFacts(ctx, projectID, blockID)
+	if err != nil {
+		return BlockContext{}, err
+	}
 	return blockContext, nil
+}
+
+func (r *Repository) ListBlockCanonFacts(ctx context.Context, projectID string, blockID string) ([]CanonFact, error) {
+	rows, err := r.db.Query(ctx, `
+		WITH block_metadata AS (
+			SELECT metadata
+			FROM blocks
+			WHERE id = $2 AND project_id = $1
+		),
+		linked_ids AS (
+			SELECT jsonb_array_elements_text(COALESCE(metadata->'character_ids', '[]'::jsonb)) AS id
+			FROM block_metadata
+			UNION
+			SELECT metadata->>'location_id' AS id
+			FROM block_metadata
+			WHERE NULLIF(metadata->>'location_id', '') IS NOT NULL
+		)
+		SELECT
+			id::text,
+			type,
+			name,
+			aliases,
+			description,
+			attributes,
+			importance,
+			status
+		FROM canon_entities
+		WHERE project_id = $1
+			AND status <> 'deprecated'
+			AND (
+				id::text IN (SELECT id FROM linked_ids)
+				OR (type = 'rule' AND status = 'canon')
+			)
+		ORDER BY importance DESC, updated_at DESC
+	`, projectID, blockID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	facts := make([]CanonFact, 0)
+	for rows.Next() {
+		var fact CanonFact
+		var description sql.NullString
+		if err := rows.Scan(
+			&fact.ID,
+			&fact.Type,
+			&fact.Name,
+			&fact.Aliases,
+			&description,
+			&fact.Attributes,
+			&fact.Importance,
+			&fact.Status,
+		); err != nil {
+			return nil, err
+		}
+		if description.Valid {
+			fact.Description = &description.String
+		}
+		if fact.Aliases == nil {
+			fact.Aliases = []string{}
+		}
+		facts = append(facts, fact)
+	}
+	return facts, rows.Err()
 }
 
 func (r *Repository) GetPromptTemplate(ctx context.Context, projectID string, templateID string) (PromptTemplate, error) {

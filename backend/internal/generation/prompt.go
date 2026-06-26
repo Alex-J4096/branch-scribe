@@ -14,6 +14,7 @@ type promptSnapshot struct {
 	BlockID          string  `json:"block_id"`
 	TaskType         string  `json:"task_type"`
 	CurrentBlock     string  `json:"current_block"`
+	CanonFacts       string  `json:"canon_facts"`
 	SelectedText     string  `json:"selected_text"`
 	UserInstruction  string  `json:"user_instruction"`
 	Prompt           string  `json:"prompt"`
@@ -37,11 +38,13 @@ func renderPrompt(req GenerateOnceRequest, blockContext BlockContext, template *
 	if blockContext.BlockTitle != nil {
 		blockTitle = *blockContext.BlockTitle
 	}
+	canonFacts := renderCanonFacts(blockContext.CanonFacts)
 
 	prompt := strings.NewReplacer(
 		"{{project_description}}", projectDescription,
 		"{{current_block_title}}", blockTitle,
 		"{{current_block}}", currentBlock,
+		"{{canon_facts}}", canonFacts,
 		"{{selected_text}}", req.SelectedText,
 		"{{user_instruction}}", req.UserInstruction,
 	).Replace(templateText)
@@ -51,12 +54,32 @@ func renderPrompt(req GenerateOnceRequest, blockContext BlockContext, template *
 		BlockID:          req.BlockID,
 		TaskType:         req.TaskType,
 		CurrentBlock:     currentBlock,
+		CanonFacts:       canonFacts,
 		SelectedText:     req.SelectedText,
 		UserInstruction:  req.UserInstruction,
 		Prompt:           prompt,
 		PromptTemplateID: templateID,
 	})
 	return prompt, snapshot
+}
+
+func renderCanonFacts(facts []CanonFact) string {
+	if len(facts) == 0 {
+		return "无"
+	}
+
+	lines := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		parts := []string{fact.Type, fact.Name}
+		if len(fact.Aliases) > 0 {
+			parts = append(parts, "别名："+strings.Join(fact.Aliases, "、"))
+		}
+		if fact.Description != nil && strings.TrimSpace(*fact.Description) != "" {
+			parts = append(parts, strings.TrimSpace(*fact.Description))
+		}
+		lines = append(lines, "- "+strings.Join(parts, "｜"))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func normalizeBlockContent(content string, format string) string {
@@ -70,20 +93,20 @@ func normalizeBlockContent(content string, format string) string {
 func defaultPromptTemplate(taskType string) string {
 	switch taskType {
 	case "free_write":
-		return "你是小说写作助手。请完全根据用户指令生成正文，不要依赖当前 block 正文。只输出生成后的正文。\n\n项目简介：\n{{project_description}}\n\n用户指令：\n{{user_instruction}}"
+		return "你是小说写作助手。请完全根据用户指令生成正文，不要依赖当前 block 正文。必须遵守硬设定。只输出生成后的正文。\n\n项目简介：\n{{project_description}}\n\n硬设定：\n{{canon_facts}}\n\n用户指令：\n{{user_instruction}}"
 	case "continue":
-		return "你是小说写作助手。请基于当前片段继续写作，保持人物、语气和叙事连贯。\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "你是小说写作助手。请基于当前片段继续写作，保持人物、语气和叙事连贯，必须遵守硬设定。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "rewrite_block":
-		return "你是小说写作助手。请根据用户指令改写当前片段，只输出改写后的正文。\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "你是小说写作助手。请根据用户指令改写当前片段，必须遵守硬设定，只输出改写后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "rewrite_selection":
-		return "你是小说写作助手。请在理解当前片段的基础上改写选中文本，只输出改写后的选中文本。\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}"
+		return "你是小说写作助手。请在理解当前片段和硬设定的基础上改写选中文本，只输出改写后的选中文本。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}"
 	case "expand":
-		return "你是小说写作助手。请扩写当前片段，补充细节、动作和感官描写，只输出扩写后的正文。\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "你是小说写作助手。请扩写当前片段，补充细节、动作和感官描写，必须遵守硬设定，只输出扩写后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "condense":
-		return "你是小说写作助手。请压缩当前片段，保留关键情节和风格，只输出压缩后的正文。\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "你是小说写作助手。请压缩当前片段，保留关键情节、风格和硬设定，只输出压缩后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "polish":
-		return "你是小说写作助手。请润色当前片段，提升表达和节奏，只输出润色后的正文。\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "你是小说写作助手。请润色当前片段，提升表达和节奏，必须遵守硬设定，只输出润色后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	default:
-		return "你是小说写作助手。请根据当前片段和用户指令完成写作任务。\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}"
+		return "你是小说写作助手。请根据当前片段、硬设定和用户指令完成写作任务。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}"
 	}
 }

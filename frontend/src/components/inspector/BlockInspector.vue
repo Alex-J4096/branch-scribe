@@ -1,11 +1,25 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { AlertCircle, Bot, Check, ChevronDown, ChevronRight, CopyPlus, FileText, GitFork, Save, Sparkles, SquarePen } from 'lucide-vue-next'
+import {
+  AlertCircle,
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CopyPlus,
+  FileText,
+  GitFork,
+  MapPin,
+  Save,
+  Sparkles,
+  SquarePen,
+  Tags,
+} from 'lucide-vue-next'
 
 import { api } from '@/api/client'
 import RichTextEditor from '@/components/editor/RichTextEditor.vue'
-import type { GenerateOnceResult, ModelProfile, Revision } from '@/api/types'
+import type { CanonEntity, GenerateOnceResult, ModelProfile, Revision } from '@/api/types'
 
 const props = defineProps<{
   projectId: string
@@ -27,6 +41,9 @@ const generationTaskType = ref('continue')
 const generationInstruction = ref('')
 const generationSelectedText = ref('')
 const editorSelectedText = ref('')
+const selectedCharacterIds = ref<string[]>([])
+const selectedLocationId = ref('')
+const tagsDraft = ref('')
 const generationResult = ref<GenerateOnceResult | null>(null)
 const streamingOutput = ref('')
 const generationError = ref('')
@@ -35,6 +52,7 @@ const draftSavedAt = ref<string | null>(null)
 const restoredLocalDraft = ref(false)
 const openSections = ref({
   title: true,
+  associations: false,
   editor: true,
   llm: false,
   fork: false,
@@ -69,9 +87,21 @@ const modelProfilesQuery = useQuery({
   queryFn: () => api.listModelProfiles(props.projectId),
 })
 
+const charactersQuery = useQuery({
+  queryKey: computed(() => ['canon', props.projectId, 'character']),
+  queryFn: () => api.listCanonEntities(props.projectId, { type: 'character' }),
+})
+
+const locationsQuery = useQuery({
+  queryKey: computed(() => ['canon', props.projectId, 'location']),
+  queryFn: () => api.listCanonEntities(props.projectId, { type: 'location' }),
+})
+
 const blockDetail = computed(() => blockQuery.data.value)
 const revisions = computed(() => revisionsQuery.data.value ?? [])
 const modelProfiles = computed(() => modelProfilesQuery.data.value ?? [])
+const characters = computed(() => charactersQuery.data.value ?? [])
+const locations = computed(() => locationsQuery.data.value ?? [])
 const currentRevision = computed(() => blockDetail.value?.current_revision ?? null)
 const displayTitle = computed(() => blockDetail.value?.block.title || '无标题片段')
 const isContentDirty = computed(() => draftContent.value !== (currentRevision.value?.content ?? ''))
@@ -111,6 +141,20 @@ const diffSegments = computed(() =>
     stripHTML(diffBaseRevision.value?.content ?? ''),
     stripHTML(diffTargetRevision.value?.content ?? ''),
   ),
+)
+const savedCharacterIds = computed(() => readStringArray(blockDetail.value?.block.metadata, 'character_ids'))
+const savedLocationId = computed(() => readString(blockDetail.value?.block.metadata, 'location_id'))
+const savedTags = computed(() => readStringArray(blockDetail.value?.block.metadata, 'tags'))
+const associatedCharacters = computed(() =>
+  savedCharacterIds.value
+    .map((id) => characters.value.find((character) => character.id === id))
+    .filter((character): character is CanonEntity => Boolean(character)),
+)
+const associatedLocation = computed(
+  () => locations.value.find((location) => location.id === savedLocationId.value) ?? null,
+)
+const hasAssociations = computed(
+  () => associatedCharacters.value.length > 0 || Boolean(associatedLocation.value) || savedTags.value.length > 0,
 )
 
 watch(
@@ -183,6 +227,16 @@ watch(
   },
 )
 
+watch(
+  () => blockDetail.value?.block.metadata,
+  (metadata) => {
+    selectedCharacterIds.value = readStringArray(metadata, 'character_ids')
+    selectedLocationId.value = readString(metadata, 'location_id')
+    tagsDraft.value = readStringArray(metadata, 'tags').join(', ')
+  },
+  { immediate: true },
+)
+
 const createRevision = useMutation({
   mutationFn: () =>
     api.createRevision(props.blockId, {
@@ -235,6 +289,16 @@ const saveGeneratedRevision = useMutation({
 
 const updateTitle = useMutation({
   mutationFn: () => api.updateBlock(props.blockId, { title: titleDraft.value.trim() || null }),
+  onSuccess: refreshInspector,
+})
+
+const updateAssociations = useMutation({
+  mutationFn: () =>
+    api.updateBlockAssociations(props.blockId, {
+      character_ids: selectedCharacterIds.value,
+      location_id: selectedLocationId.value || null,
+      tags: parseTags(tagsDraft.value),
+    }),
   onSuccess: refreshInspector,
 })
 
@@ -299,6 +363,33 @@ function countWords(value: string) {
 
 function modelProfileLabel(profile: ModelProfile) {
   return `${profile.name} · ${profile.provider} · ${profile.model}`
+}
+
+function canonOptionLabel(entity: CanonEntity) {
+  return entity.status === 'canon' ? entity.name : `${entity.name} · ${entity.status}`
+}
+
+function readString(metadata: Record<string, unknown> | undefined, key: string) {
+  const value = metadata?.[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function readStringArray(metadata: Record<string, unknown> | undefined, key: string) {
+  const value = metadata?.[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+}
+
+function parseTags(value: string) {
+  const seen = new Set<string>()
+  const tags: string[] = []
+  for (const tag of value.split(/[,，\n]/)) {
+    const trimmed = tag.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    tags.push(trimmed)
+  }
+  return tags
 }
 
 function textToHtml(value: string) {
@@ -537,6 +628,22 @@ function replaceEditorSelectionWithGeneratedContent() {
         <SquarePen :size="18" aria-hidden="true" />
       </div>
 
+      <div class="association-overview" :class="{ 'is-empty': !hasAssociations }">
+        <template v-if="hasAssociations">
+          <span v-for="character in associatedCharacters" :key="character.id">
+            {{ character.name }}
+          </span>
+          <span v-if="associatedLocation">
+            <MapPin :size="13" aria-hidden="true" />
+            {{ associatedLocation.name }}
+          </span>
+          <span v-for="tag in savedTags" :key="tag">
+            {{ tag }}
+          </span>
+        </template>
+        <span v-else>未关联 canon</span>
+      </div>
+
       <section class="inspector-section">
         <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('title')">
           <span>
@@ -551,6 +658,56 @@ function replaceEditorSelectionWithGeneratedContent() {
           <button class="button" type="submit" :disabled="updateTitle.isPending.value">
             <Save :size="16" aria-hidden="true" />
             标题
+          </button>
+        </form>
+      </section>
+
+      <section class="inspector-section">
+        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('associations')">
+          <span>
+            <ChevronDown v-if="openSections.associations" :size="16" aria-hidden="true" />
+            <ChevronRight v-else :size="16" aria-hidden="true" />
+            <h2>关联</h2>
+          </span>
+          <Tags :size="16" aria-hidden="true" />
+        </button>
+        <form v-show="openSections.associations" class="inspector-section__body association-form" @submit.prevent="updateAssociations.mutate()">
+          <label class="field-label">
+            <span>出现角色</span>
+            <select v-model="selectedCharacterIds" multiple class="association-form__multi-select">
+              <option v-for="character in characters" :key="character.id" :value="character.id">
+                {{ canonOptionLabel(character) }}
+              </option>
+            </select>
+          </label>
+
+          <label class="field-label">
+            <span>地点</span>
+            <select v-model="selectedLocationId">
+              <option value="">未选择地点</option>
+              <option v-for="location in locations" :key="location.id" :value="location.id">
+                {{ canonOptionLabel(location) }}
+              </option>
+            </select>
+          </label>
+
+          <label class="field-label">
+            <span>标签</span>
+            <input v-model="tagsDraft" type="text" placeholder="用逗号分隔标签" />
+          </label>
+
+          <div class="association-form__summary">
+            <span>{{ selectedCharacterIds.length }} 角色</span>
+            <span>
+              <MapPin :size="13" aria-hidden="true" />
+              {{ selectedLocationId ? '已选地点' : '无地点' }}
+            </span>
+            <span>{{ parseTags(tagsDraft).length }} 标签</span>
+          </div>
+
+          <button class="button button--primary" type="submit" :disabled="updateAssociations.isPending.value">
+            <Save :size="16" aria-hidden="true" />
+            保存关联
           </button>
         </form>
       </section>
@@ -703,7 +860,7 @@ function replaceEditorSelectionWithGeneratedContent() {
           <CopyPlus :size="16" aria-hidden="true" />
         </button>
         <div v-show="openSections.revisions" class="inspector-section__body">
-          <div class="diff-controls">
+          <div v-if="revisions.length >= 2" class="diff-controls">
             <select v-model="diffBaseRevisionId" :disabled="revisions.length < 2">
               <option value="" disabled>旧版本</option>
               <option v-for="revision in revisions" :key="revision.id" :value="revision.id">

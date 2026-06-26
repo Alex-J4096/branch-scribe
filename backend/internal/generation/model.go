@@ -104,6 +104,18 @@ type BlockContext struct {
 	BlockTitle         *string
 	Content            string
 	ContentFormat      string
+	CanonFacts         []CanonFact
+}
+
+type CanonFact struct {
+	ID          string          `json:"id"`
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Aliases     []string        `json:"aliases"`
+	Description *string         `json:"description"`
+	Attributes  json.RawMessage `json:"attributes"`
+	Importance  int             `json:"importance"`
+	Status      string          `json:"status"`
 }
 
 type GenerationRunInput struct {

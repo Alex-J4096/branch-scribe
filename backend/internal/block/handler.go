@@ -22,6 +22,7 @@ func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	router.POST("/projects/:projectId/blocks", handler.Create)
 	router.GET("/blocks/:blockId", handler.Get)
 	router.PATCH("/blocks/:blockId", handler.Update)
+	router.PATCH("/blocks/:blockId/associations", handler.UpdateAssociations)
 	router.DELETE("/blocks/:blockId", handler.Delete)
 	router.POST("/blocks/:blockId/fork", handler.Fork)
 
@@ -75,6 +76,21 @@ func (h *Handler) Update(c *gin.Context) {
 	newBlock, err := h.repo.Update(c.Request.Context(), c.Param("blockId"), req)
 	if err != nil {
 		respondBlockError(c, err, "BLOCK_UPDATE_FAILED", "failed to update block")
+		return
+	}
+	api.RespondOK(c, newBlock)
+}
+
+func (h *Handler) UpdateAssociations(c *gin.Context) {
+	var req UpdateBlockAssociationsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_BLOCK_REQUEST", "invalid block association request")
+		return
+	}
+
+	newBlock, err := h.repo.UpdateAssociations(c.Request.Context(), c.Param("blockId"), req)
+	if err != nil {
+		respondBlockError(c, err, "BLOCK_ASSOCIATIONS_UPDATE_FAILED", "failed to update block associations")
 		return
 	}
 	api.RespondOK(c, newBlock)

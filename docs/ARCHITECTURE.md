@@ -990,6 +990,7 @@ GET    /api/projects/:projectId/blocks
 POST   /api/projects/:projectId/blocks
 GET    /api/blocks/:blockId
 PATCH  /api/blocks/:blockId
+PATCH  /api/blocks/:blockId/associations
 DELETE /api/blocks/:blockId
 POST   /api/blocks/:blockId/fork
 ```
@@ -1038,6 +1039,10 @@ DELETE /api/prompt-templates/:templateId
 ```http
 GET    /api/projects/:projectId/memory
 POST   /api/projects/:projectId/memory
+POST   /api/blocks/:blockId/memory
+GET    /api/memory/:memoryId
+PATCH  /api/memory/:memoryId
+DELETE /api/memory/:memoryId
 POST   /api/projects/:projectId/memory/search
 POST   /api/projects/:projectId/memory/reindex
 ```
@@ -1459,33 +1464,33 @@ branchscribe/
 
 * [x] 实现 Canon Entity CRUD。
 * [x] 支持 entity 类型：character、location、faction、item、rule、event。
-* [ ] 实现 Memory Chunk CRUD。
+* [x] 实现 Memory Chunk CRUD。
 * [ ] 实现 embedding provider。
 * [ ] 实现 memory semantic search。
-* [ ] 实现 canon entity keyword search。
-* [ ] 支持为 block 关联 characters、location、tags。
-* [ ] 支持从 block 生成 memory chunk。
-* [ ] 支持手动创建 memory chunk。
+* [x] 实现 canon entity keyword search。
+* [x] 支持为 block 关联 characters、location、tags。
+* [x] 支持从 block 生成 memory chunk。
+* [x] 支持手动创建 memory chunk。
 
 ### 前端任务
 
-* [ ] 实现角色设定页面。
-* [ ] 实现地点设定页面。
-* [ ] 实现世界规则页面。
-* [ ] 实现 memory 列表页面。
-* [ ] 在 block inspector 中添加 metadata 编辑。
-* [ ] 支持为 block 选择出现角色。
-* [ ] 支持为 block 选择地点。
+* [x] 实现角色设定页面。
+* [x] 实现地点设定页面。
+* [x] 实现世界规则页面。
+* [x] 实现 memory 列表页面。
+* [x] 在 block inspector 中添加 metadata 编辑。
+* [x] 支持为 block 选择出现角色。
+* [x] 支持为 block 选择地点。
 * [ ] 支持手动触发 reindex。
-* [ ] 显示当前 block 关联的 canon entities。
+* [x] 显示当前 block 关联的 canon entities。
 
 ### 验收标准
 
-* [ ] 用户可以创建角色卡。
-* [ ] 用户可以创建地点卡。
-* [ ] 用户可以创建世界观规则。
-* [ ] 用户可以将角色和地点关联到 block。
-* [ ] LLM 生成时可以读取相关 canon。
+* [x] 用户可以创建角色卡。
+* [x] 用户可以创建地点卡。
+* [x] 用户可以创建世界观规则。
+* [x] 用户可以将角色和地点关联到 block。
+* [x] LLM 生成时可以读取相关 canon。
 * [ ] 系统可以根据文本检索相关 memory chunks。
 
 ---

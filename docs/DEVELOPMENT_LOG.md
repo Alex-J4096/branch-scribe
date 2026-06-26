@@ -384,4 +384,73 @@
 - 前端 API client 新增 Canon Entity 类型和 CRUD 方法，供后续角色/地点/世界规则页面复用。
 - 重启后端后，通过真实 API 冒烟验证：创建临时 project，创建 character canon entity，按 type/q 查询，读取详情，更新 status/importance，删除 entity，删除测试 project。
 - 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行；Vite 仍提示 Tiptap bundle 体积警告。
-- 更新 `ARCHITECTURE.md` 中 Phase 4 的 Canon Entity CRUD 和 entity 类型任务。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的 Canon Entity CRUD、entity 类型和 canon entity keyword search 任务。
+
+### Step 39: 实现 Memory Chunk CRUD
+
+- 新增 `backend/internal/memory` 包，实现 Memory Chunk 的 list/create/get/update/delete。
+- 新增 API 路由：
+  - `GET /api/projects/:projectId/memory`
+  - `POST /api/projects/:projectId/memory`
+  - `GET /api/memory/:memoryId`
+  - `PATCH /api/memory/:memoryId`
+  - `DELETE /api/memory/:memoryId`
+- 列表接口支持按 `source_type`、`chunk_kind`、`tag` 和 `q` 过滤；`q` 会匹配 `chunk_text`。
+- 支持手动创建记忆 chunk，保存 `source_type`、可选 `source_id`、`chunk_text`、`chunk_kind`、去重后的 `tags` 和 `metadata` JSON。
+- 前端 API client 新增 `MemoryChunk`、`MemoryChunkInput` 类型和 CRUD 方法，供后续 memory 列表页与 RAG 配置复用。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 用户启动 Docker 数据库后，通过真实 API 冒烟验证：创建临时 project，创建 manual memory chunk，按 `chunk_kind`、`tag`、`q` 查询，读取详情，更新正文和 tags，删除 memory chunk，删除测试 project。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的 Memory Chunk CRUD 任务和 Memory API 路由说明。
+
+### Step 40: 支持 Block 关联角色、地点和标签
+
+- 新增 `PATCH /api/blocks/:blockId/associations`，用于单独更新 block 的 Phase 4 关联信息。
+- 关联信息写入 block `metadata`：`character_ids`、`location_id` 和 `tags`，不会覆盖 metadata 中其他键。
+- 后端会去重并清理空的 `character_ids` 和 `tags`，空 `location_id` 会保存为 `null`。
+- 前端 API client 新增 `BlockAssociationsInput` 和 `updateBlockAssociations`，供后续 Block Inspector metadata 编辑器直接调用。
+- 通过真实 API 冒烟验证：创建临时 project、block、character canon、location canon，调用关联接口后确认 metadata 保留既有键，并写入去重后的 `character_ids`、`location_id` 和 `tags`，最后删除测试 project。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的 block 关联任务和 Blocks API 路由说明。
+
+### Step 41: Block Inspector 添加 Metadata 关联编辑
+
+- 在 Block Inspector 中新增“关联”折叠面板，接入 Phase 4 block association API。
+- 面板会加载项目内 `character` 和 `location` 类型的 Canon Entity；角色支持多选，地点支持单选。
+- 新增标签输入，支持用中文逗号、英文逗号或换行分隔，并在提交前去重。
+- 保存后调用 `PATCH /api/blocks/:blockId/associations`，刷新当前 block、revisions 和 graph 缓存，保证画布与 Inspector 使用同一份 metadata。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的 Block Inspector metadata 编辑、选择出现角色、选择地点任务。
+
+### Step 42: 修复新建 Block 历史版本重复显示 user
+
+- 定位到新建 block 后历史版本面板显示三个 `user` 的原因：后端实际只创建 1 条 revision，但前端在只有 1 条 revision 时仍渲染两个 diff 下拉框，每个下拉框都会显示同一条 revision，再加上版本列表本身共出现三次。
+- 调整 Block Inspector：只有 revisions 数量大于等于 2 时才显示 diff 对比控件，单版本时只显示历史版本列表。
+- 通过真实 API 冒烟验证新建 block 后 `/api/blocks/:blockId/revisions` 只返回 1 条 `user` revision。
+
+### Step 43: 显示当前 Block 关联的 Canon Entities
+
+- 在 Block Inspector 顶部新增关联概览，直接显示当前 block 已保存的角色、地点和标签。
+- 角色和地点从 Canon Entity 列表按 metadata 中的 `character_ids`、`location_id` 解析为名称，避免只暴露 UUID。
+- 概览使用已保存的 block metadata，不把关联编辑表单里尚未保存的选择误展示为当前状态。
+- 未关联任何 canon 时显示空状态，便于快速判断当前 block 是否已完成上下文标注。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的“显示当前 block 关联的 canon entities”任务。
+
+### Step 44: Phase 4 管理页与从 Block 生成 Memory
+
+- 新增 Canon 管理页 `CanonManager.vue`，角色、地点、世界规则共用同一个 CRUD 页面。
+- 新增 Memory 管理页 `MemoryManager.vue`，支持按关键词、chunk kind、tag 过滤，支持手动创建、编辑、删除 memory chunk。
+- Memory 管理页支持选择已有 block，并调用 `POST /api/blocks/:blockId/memory` 从当前 revision 生成 `block_revision` memory chunk。
+- 工作台顶部新增入口：角色、地点、规则、Memory。
+- 新增后端路由 `POST /api/blocks/:blockId/memory`，从 block 当前 revision 读取正文，净化 HTML 后保存到 `memory_chunks`，source 指向当前 revision。
+- 更新前端 API client，新增 `createMemoryChunkFromBlock` 和对应类型。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的角色设定页面、地点设定页面、世界规则页面、memory 列表页面和从 block 生成 memory chunk 任务。
+
+### Step 45: LLM 生成读取相关 Canon
+
+- Generation repository 新增 block canon facts 加载逻辑：读取 block metadata 中的 `character_ids`、`location_id`，并自动加载项目内 `status=canon` 的世界规则。
+- Prompt 渲染新增 `{{canon_facts}}` 变量，并将 canon facts 写入 generation run 的 `input_context_snapshot`。
+- 默认生成模板加入“硬设定”段，续写、改写、局部改写、扩写、缩写、润色和自由生成都会要求遵守 canon。
+- 通过真实 API 冒烟验证：创建临时 project、block、character、location、rule，关联 block 后触发流式生成到不可用本地 provider，错误事件返回的 prompt 中包含角色、地点和世界规则名称。
+- 同一轮冒烟验证 `POST /api/blocks/:blockId/memory` 会从 HTML revision 生成纯文本 memory chunk。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的“LLM 生成时可以读取相关 canon”验收标准。

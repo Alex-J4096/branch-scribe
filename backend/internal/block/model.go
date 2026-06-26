@@ -70,6 +70,12 @@ type UpdateBlockRequest struct {
 	Metadata      json.RawMessage `json:"metadata"`
 }
 
+type UpdateBlockAssociationsRequest struct {
+	CharacterIDs []string `json:"character_ids"`
+	LocationID   *string  `json:"location_id"`
+	Tags         []string `json:"tags"`
+}
+
 type ForkBlockRequest struct {
 	BranchID   *string         `json:"branch_id"`
 	Title      *string         `json:"title"`
@@ -112,4 +118,21 @@ func normalizeJSON(raw json.RawMessage) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return raw
+}
+
+func normalizeStringList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
 }

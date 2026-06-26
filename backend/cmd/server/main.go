@@ -18,6 +18,7 @@ import (
 	"branchscribe/backend/internal/database"
 	"branchscribe/backend/internal/generation"
 	"branchscribe/backend/internal/graph"
+	"branchscribe/backend/internal/memory"
 	"branchscribe/backend/internal/modelprofile"
 	"branchscribe/backend/internal/project"
 	"branchscribe/backend/internal/prompttemplate"
@@ -47,6 +48,7 @@ func main() {
 	prompttemplate.RegisterRoutes(apiGroup, prompttemplate.NewHandler(prompttemplate.NewRepository(db)))
 	generation.RegisterRoutes(apiGroup, generation.NewHandler(generation.NewRepository(db), generation.NewOpenAICompatibleProvider()))
 	canon.RegisterRoutes(apiGroup, canon.NewHandler(canon.NewRepository(db)))
+	memory.RegisterRoutes(apiGroup, memory.NewHandler(memory.NewRepository(db)))
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,

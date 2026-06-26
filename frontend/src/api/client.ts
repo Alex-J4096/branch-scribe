@@ -2,6 +2,7 @@ import type {
   ApiEnvelope,
   ApiErrorEnvelope,
   Block,
+  BlockAssociationsInput,
   BlockDetail,
   Branch,
   CanonEntity,
@@ -15,6 +16,9 @@ import type {
   GenerateOnceResult,
   GenerateStreamEvent,
   GraphEdge,
+  MemoryChunk,
+  MemoryChunkFromBlockInput,
+  MemoryChunkInput,
   ModelProfile,
   PromptTemplate,
   Project,
@@ -213,9 +217,47 @@ export const api = {
       method: 'DELETE',
     }),
 
+  listMemoryChunks: (
+    projectId: string,
+    filter: { source_type?: string; chunk_kind?: string; tag?: string; q?: string } = {},
+  ) => {
+    const query = new URLSearchParams()
+    if (filter.source_type) query.set('source_type', filter.source_type)
+    if (filter.chunk_kind) query.set('chunk_kind', filter.chunk_kind)
+    if (filter.tag) query.set('tag', filter.tag)
+    if (filter.q) query.set('q', filter.q)
+    const suffix = query.toString() ? `?${query.toString()}` : ''
+    return request<MemoryChunk[]>(`/projects/${projectId}/memory${suffix}`)
+  },
+  createMemoryChunk: (projectId: string, input: MemoryChunkInput) =>
+    request<MemoryChunk>(`/projects/${projectId}/memory`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  createMemoryChunkFromBlock: (blockId: string, input: MemoryChunkFromBlockInput) =>
+    request<MemoryChunk>(`/blocks/${blockId}/memory`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  getMemoryChunk: (memoryId: string) => request<MemoryChunk>(`/memory/${memoryId}`),
+  updateMemoryChunk: (memoryId: string, input: Partial<MemoryChunkInput>) =>
+    request<MemoryChunk>(`/memory/${memoryId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deleteMemoryChunk: (memoryId: string) =>
+    request<{ deleted: boolean }>(`/memory/${memoryId}`, {
+      method: 'DELETE',
+    }),
+
   getBlock: (blockId: string) => request<BlockDetail>(`/blocks/${blockId}`),
   updateBlock: (blockId: string, input: Partial<Pick<Block, 'title' | 'type' | 'order_index'>>) =>
     request<Block>(`/blocks/${blockId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  updateBlockAssociations: (blockId: string, input: BlockAssociationsInput) =>
+    request<Block>(`/blocks/${blockId}/associations`, {
       method: 'PATCH',
       body: JSON.stringify(input),
     }),
