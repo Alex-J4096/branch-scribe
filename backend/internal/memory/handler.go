@@ -21,6 +21,7 @@ func NewHandler(repo *Repository) *Handler {
 func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	router.GET("/projects/:projectId/memory", handler.List)
 	router.POST("/projects/:projectId/memory", handler.Create)
+	router.POST("/projects/:projectId/memory/search", handler.Search)
 	router.POST("/blocks/:blockId/memory", handler.CreateFromBlock)
 	router.GET("/memory/:memoryId", handler.Get)
 	router.PATCH("/memory/:memoryId", handler.Update)
@@ -54,6 +55,26 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, api.Envelope{Data: chunk, Error: nil})
+}
+
+func (h *Handler) Search(c *gin.Context) {
+	var req SearchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_MEMORY_SEARCH_REQUEST", "invalid memory search request")
+		return
+	}
+
+	chunks, err := h.repo.List(c.Request.Context(), c.Param("projectId"), ListFilter{
+		SourceType: strings.TrimSpace(req.SourceType),
+		ChunkKind:  strings.TrimSpace(req.ChunkKind),
+		Tag:        strings.TrimSpace(req.Tag),
+		Query:      strings.TrimSpace(req.Query),
+	})
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "MEMORY_SEARCH_FAILED", "failed to search memory chunks")
+		return
+	}
+	api.RespondOK(c, chunks)
 }
 
 func (h *Handler) CreateFromBlock(c *gin.Context) {

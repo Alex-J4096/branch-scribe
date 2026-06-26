@@ -1491,7 +1491,7 @@ branchscribe/
 * [x] 用户可以创建世界观规则。
 * [x] 用户可以将角色和地点关联到 block。
 * [x] LLM 生成时可以读取相关 canon。
-* [ ] 系统可以根据文本检索相关 memory chunks。
+* [x] 系统可以根据文本检索相关 memory chunks。
 
 ---
 

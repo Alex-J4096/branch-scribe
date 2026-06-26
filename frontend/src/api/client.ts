@@ -19,6 +19,7 @@ import type {
   MemoryChunk,
   MemoryChunkFromBlockInput,
   MemoryChunkInput,
+  MemorySearchInput,
   ModelProfile,
   PromptTemplate,
   Project,
@@ -231,6 +232,11 @@ export const api = {
   },
   createMemoryChunk: (projectId: string, input: MemoryChunkInput) =>
     request<MemoryChunk>(`/projects/${projectId}/memory`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  searchMemoryChunks: (projectId: string, input: MemorySearchInput) =>
+    request<MemoryChunk[]>(`/projects/${projectId}/memory/search`, {
       method: 'POST',
       body: JSON.stringify(input),
     }),

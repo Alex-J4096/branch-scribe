@@ -454,3 +454,11 @@
 - 同一轮冒烟验证 `POST /api/blocks/:blockId/memory` 会从 HTML revision 生成纯文本 memory chunk。
 - 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Go provider 测试因 `httptest` 需要监听本地端口，使用提升权限运行；Vite 仍提示 Tiptap bundle 体积警告。
 - 更新 `ARCHITECTURE.md` 中 Phase 4 的“LLM 生成时可以读取相关 canon”验收标准。
+
+### Step 46: 实现非 Embedding Memory 文本搜索
+
+- 新增 `POST /api/projects/:projectId/memory/search`，作为非 embedding 的关键词搜索端点。
+- 搜索端点复用 Memory repository 的过滤能力，支持 `q`、`source_type`、`chunk_kind` 和 `tag`。
+- 前端 API client 新增 `searchMemoryChunks` 和 `MemorySearchInput`，后续可替换 memory 列表页的 GET 查询或扩展搜索体验。
+- 该端点不做 semantic search，不依赖 embedding provider；Phase 4 的 embedding provider、semantic search 和 reindex 仍按用户要求排除。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 的“系统可以根据文本检索相关 memory chunks”验收标准。

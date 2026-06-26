@@ -52,6 +52,13 @@ type CreateFromBlockRequest struct {
 	Metadata  json.RawMessage `json:"metadata"`
 }
 
+type SearchRequest struct {
+	Query      string `json:"q"`
+	SourceType string `json:"source_type"`
+	ChunkKind  string `json:"chunk_kind"`
+	Tag        string `json:"tag"`
+}
+
 type ListFilter struct {
 	SourceType string
 	ChunkKind  string

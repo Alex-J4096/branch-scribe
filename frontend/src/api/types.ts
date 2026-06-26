@@ -248,6 +248,13 @@ export type MemoryChunkFromBlockInput = {
   metadata?: Record<string, unknown>
 }
 
+export type MemorySearchInput = {
+  q?: string
+  source_type?: string
+  chunk_kind?: string
+  tag?: string
+}
+
 export type ModelProfileInput = {
   name: string
   provider: ModelProfile['provider']
