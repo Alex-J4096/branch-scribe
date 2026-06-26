@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { CopyPlus, GitFork, Save, SquarePen } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, CopyPlus, FileText, GitFork, Save, SquarePen } from 'lucide-vue-next'
 
 import { api } from '@/api/client'
 import RichTextEditor from '@/components/editor/RichTextEditor.vue'
@@ -24,6 +24,12 @@ const diffBaseRevisionId = ref('')
 const diffTargetRevisionId = ref('')
 const draftSavedAt = ref<string | null>(null)
 const restoredLocalDraft = ref(false)
+const openSections = ref({
+  title: true,
+  editor: true,
+  fork: false,
+  revisions: true,
+})
 let autosaveTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const blockQuery = useQuery({
@@ -288,6 +294,10 @@ function discardDraft() {
 function formatDraftTime(value: string) {
   return new Date(value).toLocaleTimeString()
 }
+
+function toggleSection(section: keyof typeof openSections.value) {
+  openSections.value[section] = !openSections.value[section]
+}
 </script>
 
 <template>
@@ -303,77 +313,115 @@ function formatDraftTime(value: string) {
         <SquarePen :size="18" aria-hidden="true" />
       </div>
 
-      <form class="title-form" @submit.prevent="updateTitle.mutate()">
-        <input v-model="titleDraft" type="text" placeholder="Block 标题（可选）" />
-        <button class="button" type="submit" :disabled="updateTitle.isPending.value">
-          <Save :size="16" aria-hidden="true" />
-          标题
-        </button>
-      </form>
-
-      <div class="editor-field">
-        <span>正文 · {{ wordCount }} 字 · {{ isContentDirty ? '未保存' : '当前 revision' }}</span>
-        <RichTextEditor v-model="draftContent" :content-format="currentRevision?.content_format" />
-      </div>
-
-      <div class="revision-status">
-        <span>{{ currentRevision?.content_format ?? 'empty' }}</span>
-        <span>{{ currentRevisionHash }}</span>
-        <span>{{ currentRevision ? revisionLabel(currentRevision) : '无 revision' }}</span>
-        <span v-if="draftSavedAt">{{ restoredLocalDraft ? '已恢复本地草稿' : '草稿已自动保存' }} · {{ formatDraftTime(draftSavedAt) }}</span>
-      </div>
-
-      <div class="inspector__actions">
-        <button class="button button--primary" type="button" :disabled="createRevision.isPending.value" @click="createRevision.mutate()">
-          <Save :size="16" aria-hidden="true" />
-          保存 Revision
-        </button>
-        <button v-if="draftSavedAt" class="button" type="button" @click="discardDraft">丢弃草稿</button>
-      </div>
-
-      <div class="fork-form">
-        <input v-model="forkTitle" type="text" placeholder="Fork 标题（可选）" />
-        <button class="button" type="button" :disabled="forkBlock.isPending.value" @click="forkBlock.mutate()">
-          <GitFork :size="16" aria-hidden="true" />
-          Fork
-        </button>
-      </div>
-
-      <section class="revision-list">
-        <div class="panel-section__header">
-          <h2>历史版本</h2>
-          <CopyPlus :size="16" aria-hidden="true" />
-        </div>
-        <div class="diff-controls">
-          <select v-model="diffBaseRevisionId" :disabled="revisions.length < 2">
-            <option value="" disabled>旧版本</option>
-            <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
-              {{ revisionLabel(revision) }}
-            </option>
-          </select>
-          <select v-model="diffTargetRevisionId" :disabled="revisions.length < 2">
-            <option value="" disabled>新版本</option>
-            <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
-              {{ revisionLabel(revision) }}
-            </option>
-          </select>
-        </div>
-        <div v-if="diffBaseRevision && diffTargetRevision && diffBaseRevision.id !== diffTargetRevision.id" class="diff-viewer">
-          <span v-for="(segment, index) in diffSegments" :key="index" :class="`diff-viewer__${segment.type}`">
-            {{ segment.text }}
+      <section class="inspector-section">
+        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('title')">
+          <span>
+            <ChevronDown v-if="openSections.title" :size="16" aria-hidden="true" />
+            <ChevronRight v-else :size="16" aria-hidden="true" />
+            <h2>标题</h2>
           </span>
-        </div>
-        <button
-          v-for="revision in revisions"
-          :key="revision.id"
-          class="revision-list__item"
-          :class="{ 'is-current': revision.id === blockDetail.block.current_revision_id }"
-          type="button"
-          @click="selectRevision.mutate(revision.id)"
-        >
-          <span>{{ revisionLabel(revision) }}</span>
-          <small>{{ revision.content_hash?.slice(0, 10) }}</small>
+          <SquarePen :size="16" aria-hidden="true" />
         </button>
+        <form v-show="openSections.title" class="title-form" @submit.prevent="updateTitle.mutate()">
+          <input v-model="titleDraft" type="text" placeholder="Block 标题（可选）" />
+          <button class="button" type="submit" :disabled="updateTitle.isPending.value">
+            <Save :size="16" aria-hidden="true" />
+            标题
+          </button>
+        </form>
+      </section>
+
+      <section class="inspector-section">
+        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('editor')">
+          <span>
+            <ChevronDown v-if="openSections.editor" :size="16" aria-hidden="true" />
+            <ChevronRight v-else :size="16" aria-hidden="true" />
+            <h2>正文</h2>
+          </span>
+          <FileText :size="16" aria-hidden="true" />
+        </button>
+        <div v-show="openSections.editor" class="inspector-section__body">
+          <div class="editor-field">
+            <span>正文 · {{ wordCount }} 字 · {{ isContentDirty ? '未保存' : '当前 revision' }}</span>
+            <RichTextEditor v-model="draftContent" :content-format="currentRevision?.content_format" />
+          </div>
+
+          <div class="revision-status">
+            <span>{{ currentRevision?.content_format ?? 'empty' }}</span>
+            <span>{{ currentRevisionHash }}</span>
+            <span>{{ currentRevision ? revisionLabel(currentRevision) : '无 revision' }}</span>
+            <span v-if="draftSavedAt">{{ restoredLocalDraft ? '已恢复本地草稿' : '草稿已自动保存' }} · {{ formatDraftTime(draftSavedAt) }}</span>
+          </div>
+
+          <div class="inspector__actions">
+            <button class="button button--primary" type="button" :disabled="createRevision.isPending.value" @click="createRevision.mutate()">
+              <Save :size="16" aria-hidden="true" />
+              保存 Revision
+            </button>
+            <button v-if="draftSavedAt" class="button" type="button" @click="discardDraft">丢弃草稿</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="inspector-section">
+        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('fork')">
+          <span>
+            <ChevronDown v-if="openSections.fork" :size="16" aria-hidden="true" />
+            <ChevronRight v-else :size="16" aria-hidden="true" />
+            <h2>Fork</h2>
+          </span>
+          <GitFork :size="16" aria-hidden="true" />
+        </button>
+        <div v-show="openSections.fork" class="fork-form">
+          <input v-model="forkTitle" type="text" placeholder="Fork 标题（可选）" />
+          <button class="button" type="button" :disabled="forkBlock.isPending.value" @click="forkBlock.mutate()">
+            <GitFork :size="16" aria-hidden="true" />
+            Fork
+          </button>
+        </div>
+      </section>
+
+      <section class="inspector-section revision-list">
+        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('revisions')">
+          <span>
+            <ChevronDown v-if="openSections.revisions" :size="16" aria-hidden="true" />
+            <ChevronRight v-else :size="16" aria-hidden="true" />
+            <h2>历史版本</h2>
+          </span>
+          <CopyPlus :size="16" aria-hidden="true" />
+        </button>
+        <div v-show="openSections.revisions" class="inspector-section__body">
+          <div class="diff-controls">
+            <select v-model="diffBaseRevisionId" :disabled="revisions.length < 2">
+              <option value="" disabled>旧版本</option>
+              <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
+                {{ revisionLabel(revision) }}
+              </option>
+            </select>
+            <select v-model="diffTargetRevisionId" :disabled="revisions.length < 2">
+              <option value="" disabled>新版本</option>
+              <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
+                {{ revisionLabel(revision) }}
+              </option>
+            </select>
+          </div>
+          <div v-if="diffBaseRevision && diffTargetRevision && diffBaseRevision.id !== diffTargetRevision.id" class="diff-viewer">
+            <span v-for="(segment, index) in diffSegments" :key="index" :class="`diff-viewer__${segment.type}`">
+              {{ segment.text }}
+            </span>
+          </div>
+          <button
+            v-for="revision in revisions"
+            :key="revision.id"
+            class="revision-list__item"
+            :class="{ 'is-current': revision.id === blockDetail.block.current_revision_id }"
+            type="button"
+            @click="selectRevision.mutate(revision.id)"
+          >
+            <span>{{ revisionLabel(revision) }}</span>
+            <small>{{ revision.content_hash?.slice(0, 10) }}</small>
+          </button>
+        </div>
       </section>
     </template>
   </section>

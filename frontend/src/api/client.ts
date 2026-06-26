@@ -5,9 +5,11 @@ import type {
   BlockDetail,
   Branch,
   CreateBlockInput,
+  ModelProfileInput,
   CreateProjectInput,
   CreateRevisionInput,
   GraphEdge,
+  ModelProfile,
   Project,
   ProjectGraph,
   Revision,
@@ -112,5 +114,21 @@ export const api = {
   selectRevision: (blockId: string, revisionId: string) =>
     request<Block>(`/blocks/${blockId}/revisions/${revisionId}/select`, {
       method: 'POST',
+    }),
+
+  listModelProfiles: (projectId: string) => request<ModelProfile[]>(`/projects/${projectId}/model-profiles`),
+  createModelProfile: (projectId: string, input: ModelProfileInput) =>
+    request<ModelProfile>(`/projects/${projectId}/model-profiles`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateModelProfile: (profileId: string, input: Partial<ModelProfileInput>) =>
+    request<ModelProfile>(`/model-profiles/${profileId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deleteModelProfile: (profileId: string) =>
+    request<{ deleted: boolean }>(`/model-profiles/${profileId}`, {
+      method: 'DELETE',
     }),
 }

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import ProjectList from '@/views/ProjectList.vue'
 import ProjectWorkspace from '@/views/ProjectWorkspace.vue'
+import ModelProfileSettings from '@/views/ModelProfileSettings.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -15,6 +16,11 @@ export const router = createRouter({
       path: '/projects/:projectId',
       name: 'workspace',
       component: ProjectWorkspace,
+    },
+    {
+      path: '/projects/:projectId/model-profiles',
+      name: 'model-profiles',
+      component: ModelProfileSettings,
     },
   ],
 })

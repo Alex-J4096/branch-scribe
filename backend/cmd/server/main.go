@@ -16,6 +16,7 @@ import (
 	"branchscribe/backend/internal/config"
 	"branchscribe/backend/internal/database"
 	"branchscribe/backend/internal/graph"
+	"branchscribe/backend/internal/modelprofile"
 	"branchscribe/backend/internal/project"
 )
 
@@ -39,6 +40,7 @@ func main() {
 	branch.RegisterRoutes(apiGroup, branch.NewHandler(branch.NewRepository(db)))
 	block.RegisterRoutes(apiGroup, block.NewHandler(block.NewRepository(db)))
 	graph.RegisterRoutes(apiGroup, graph.NewHandler(graph.NewRepository(db)))
+	modelprofile.RegisterRoutes(apiGroup, modelprofile.NewHandler(modelprofile.NewRepository(db)))
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,

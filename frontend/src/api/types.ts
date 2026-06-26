@@ -87,6 +87,23 @@ export type ProjectGraph = {
   edges: GraphEdge[]
 }
 
+export type ModelProfile = {
+  id: string
+  project_id: string | null
+  name: string
+  provider: 'openai_compatible' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'deepseek' | 'moonshot'
+  model: string
+  base_url: string | null
+  has_api_key: boolean
+  temperature: number
+  top_p: number
+  max_tokens: number
+  context_window: number
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
 export type CreateProjectInput = {
   name: string
   description?: string
@@ -106,4 +123,17 @@ export type CreateRevisionInput = {
   content_format?: string
   source?: Revision['source']
   set_current?: boolean
+}
+
+export type ModelProfileInput = {
+  name: string
+  provider: ModelProfile['provider']
+  model: string
+  base_url?: string | null
+  api_key?: string | null
+  clear_api_key?: boolean
+  temperature?: number
+  top_p?: number
+  max_tokens?: number
+  context_window?: number
 }

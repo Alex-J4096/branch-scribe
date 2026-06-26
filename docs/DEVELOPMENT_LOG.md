@@ -181,3 +181,46 @@
 - 同步确认后端 revision `metadata` 和 `source` 已在创建 revision 链路中落库。
 - 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
 - 更新 `ARCHITECTURE.md` 中 Phase 2 的自动保存草稿、metadata、source 和验收状态。
+
+### Step 20: 实现 Model Profile 后端 CRUD
+
+- 新增 `backend/internal/modelprofile` 包，实现 Model Profile 的 list/create/get/update/delete。
+- 新增 API 路由：
+  - `GET /api/projects/:projectId/model-profiles`
+  - `POST /api/projects/:projectId/model-profiles`
+  - `GET /api/model-profiles/:profileId`
+  - `PATCH /api/model-profiles/:profileId`
+  - `DELETE /api/model-profiles/:profileId`
+- Model Profile 响应只返回 `has_api_key`，不返回 `api_key` 或 `api_key_ref` 明文。
+- 支持配置 provider、base_url、model、temperature、top_p、max_tokens、context_window 和 metadata。
+- 运行 `go test ./...`，后端测试通过。
+- 通过本地 API 冒烟验证：创建带 api_key 的 model profile，响应中 `has_api_key=true` 且没有 `api_key` 字段。
+- 更新 `ARCHITECTURE.md` 中 Phase 3 的 Model Profile CRUD 和 API key 不回传任务。
+
+### Step 21: 实现模型配置页面
+
+- 新增 `ModelProfileSettings` 页面，并添加 `/projects/:projectId/model-profiles` 路由。
+- 工作台顶栏新增“模型”入口，可以从项目工作台进入模型配置页面。
+- 前端新增 Model Profile 类型和 API client 方法，支持 list/create/update/delete。
+- 模型配置页面支持配置 provider、base_url、api_key、model、temperature、top_p、max_tokens 和 context_window。
+- API key 输入只用于写入；读取列表和编辑已有配置时只显示是否已配置，不显示明文。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 3 模型配置页面和参数配置任务。
+
+### Step 22: 修复富文本转义并调整模型配置界面
+
+- 修复 Tiptap 编辑器输入后被再次按 markdown 归一化的问题；当内容已经是 HTML 时不再转义，从而避免正文变成可见 HTML 转义符。
+- 将模型配置页调整为更接近 Cherry Studio 的设置页结构：左侧 profile 列表，右侧按 Provider 和 Generation 分组编辑。
+- Profile 列表显示 provider、model 和 API key 状态，不显示 API key 明文。
+- Generation 参数改为滑条和数字输入并排，覆盖 temperature、top_p、max_tokens 和 context_window。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 重新启动 Vite dev server，`http://localhost:5173/` 可访问。
+
+### Step 23: 将工作台左右菜单改为抽屉
+
+- 将项目工作台左右侧栏改为抽屉式布局，左右菜单都支持一键收起和展开。
+- 左侧抽屉中的分支、新建 Block、Block 列表和备用创建 Edge 表单都支持独立收起。
+- 右侧抽屉中的 block inspector 支持整体收起，内部标题、正文、Fork 和历史版本功能组也支持独立收起。
+- 收起左右抽屉后画布自动扩展，便于在图上管理 block 和拖拽连接。
+- 运行 `npm run typecheck`、`npm run build` 和 `go test ./...`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 1 的抽屉式菜单和功能组折叠任务。

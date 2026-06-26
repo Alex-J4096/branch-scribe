@@ -1301,6 +1301,8 @@ branchscribe/
 * [x] 支持创建 block。
 * [x] 支持 block 列表管理、快速选择和删除。
 * [x] 支持通过节点边缘热区拖拽吸附创建 edge，保留表单创建作为备用。
+* [x] 左右菜单支持抽屉式收起和展开。
+* [x] 抽屉中的工作区和 inspector 功能组可以独立收起。
 * [x] 点击 block 后在右侧显示详情。
 * [x] 显示 revision 列表。
 * [x] 支持选择 revision。
@@ -1310,6 +1312,7 @@ branchscribe/
 * [x] 用户可以创建项目。
 * [x] 用户可以创建 block。
 * [x] 用户可以通过列表查看、快速选择和删除 block。
+* [x] 用户可以收起左右抽屉，让画布获得更多空间。
 * [x] 用户可以在图上看到 block。
 * [x] 用户可以拖动 block 并保存位置。
 * [x] 用户可以通过节点边缘热区拖拽吸附或备用表单创建 edge 连接两个 block。
@@ -1367,7 +1370,7 @@ branchscribe/
 
 ### 后端任务
 
-* [ ] 实现 Model Profile CRUD。
+* [x] 实现 Model Profile CRUD。
 * [ ] 实现 Prompt Template CRUD。
 * [ ] 实现 OpenAI-compatible Provider。
 * [ ] 实现 GenerateOnce。
@@ -1384,12 +1387,12 @@ branchscribe/
 
 ### 前端任务
 
-* [ ] 实现模型配置页面。
-* [ ] 支持配置 provider、base_url、api_key、model。
-* [ ] 支持配置 temperature。
-* [ ] 支持配置 top_p。
-* [ ] 支持配置 max_tokens。
-* [ ] 支持配置 context_window。
+* [x] 实现模型配置页面。
+* [x] 支持配置 provider、base_url、api_key、model。
+* [x] 支持配置 temperature。
+* [x] 支持配置 top_p。
+* [x] 支持配置 max_tokens。
+* [x] 支持配置 context_window。
 * [ ] 在 block inspector 中添加 LLM 操作按钮。
 * [ ] 实现用户指令输入框。
 * [ ] 实现流式输出显示。
@@ -1398,14 +1401,14 @@ branchscribe/
 
 ### 安全任务
 
-* [ ] API key 不返回给前端。
+* [x] API key 不返回给前端。
 * [ ] API key 在数据库中加密存储，或 MVP 阶段仅使用环境变量。
 * [ ] 对 LLM 请求做超时控制。
 * [ ] 对服务商 API 错误做清晰提示。
 
 ### 验收标准
 
-* [ ] 用户可以配置一个 OpenAI-compatible 模型。
+* [x] 用户可以配置一个 OpenAI-compatible 模型。
 * [ ] 用户可以对 block 执行续写。
 * [ ] 用户可以对 block 执行改写。
 * [ ] 用户可以选中文本执行局部修改。

@@ -43,12 +43,16 @@ onBeforeUnmount(() => {
 
 function normalizeEditorContent(content: string, format?: string) {
   if (!content.trim()) return '<p></p>'
-  if (format === 'html') return content
+  if (format === 'html' || isLikelyHTML(content)) return content
 
   return content
     .split(/\n{2,}/)
     .map((paragraph) => `<p>${escapeHTML(paragraph).replace(/\n/g, '<br>')}</p>`)
     .join('')
+}
+
+function isLikelyHTML(value: string) {
+  return /<\/?[a-z][\s\S]*>/i.test(value)
 }
 
 function escapeHTML(value: string) {
