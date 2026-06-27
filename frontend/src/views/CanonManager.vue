@@ -179,7 +179,7 @@ function resetForm() {
             </select>
           </label>
           <label class="field-label">
-            <span>重要度</span>
+            <span>重要度（1–10）</span>
             <input v-model.number="form.importance" type="number" min="1" max="10" />
           </label>
         </div>

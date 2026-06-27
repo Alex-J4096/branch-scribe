@@ -340,6 +340,9 @@ func (r *Repository) CreateRevision(ctx context.Context, blockID string, req Cre
 		if _, err := tx.Exec(ctx, `UPDATE blocks SET current_revision_id = $1 WHERE id = $2`, revision.ID, blockID); err != nil {
 			return Revision{}, err
 		}
+		if err := markRelatedSummariesStale(ctx, tx, blockID); err != nil {
+			return Revision{}, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -358,7 +361,12 @@ func (r *Repository) GetRevision(ctx context.Context, revisionID string) (Revisi
 }
 
 func (r *Repository) SelectRevision(ctx context.Context, blockID string, revisionID string) (Block, error) {
-	newBlock, err := scanBlock(r.db.QueryRow(ctx, `
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Block{}, err
+	}
+	defer rollback(ctx, tx)
+	newBlock, err := scanBlock(tx.QueryRow(ctx, `
 		UPDATE blocks
 		SET current_revision_id = $1
 		WHERE id = $2
@@ -384,7 +392,33 @@ func (r *Repository) SelectRevision(ctx context.Context, blockID string, revisio
 	if err != nil {
 		return Block{}, normalizeNotFound(err)
 	}
+	if err := markRelatedSummariesStale(ctx, tx, blockID); err != nil {
+		return Block{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Block{}, err
+	}
 	return newBlock, nil
+}
+
+func markRelatedSummariesStale(ctx context.Context, tx pgx.Tx, blockID string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE summary_snapshots summary
+		SET status = 'stale'
+		FROM blocks changed
+		WHERE changed.id = $1
+			AND summary.project_id = changed.project_id
+			AND summary.status = 'valid'
+			AND (
+				(summary.target_type = 'block' AND summary.target_id = changed.id)
+				OR (
+					summary.target_type = 'chapter'
+					AND (summary.target_id = changed.parent_block_id OR (changed.type = 'chapter' AND summary.target_id = changed.id))
+				)
+				OR (summary.target_type = 'branch' AND summary.target_id = changed.branch_id)
+			)
+	`, blockID)
+	return err
 }
 
 const selectBlockSQL = `

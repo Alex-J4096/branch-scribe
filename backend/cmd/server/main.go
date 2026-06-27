@@ -48,7 +48,7 @@ func main() {
 	prompttemplate.RegisterRoutes(apiGroup, prompttemplate.NewHandler(prompttemplate.NewRepository(db)))
 	generation.RegisterRoutes(apiGroup, generation.NewHandler(generation.NewRepository(db), generation.NewOpenAICompatibleProvider()))
 	canon.RegisterRoutes(apiGroup, canon.NewHandler(canon.NewRepository(db)))
-	memory.RegisterRoutes(apiGroup, memory.NewHandler(memory.NewRepository(db)))
+	memory.RegisterRoutes(apiGroup, memory.NewHandler(memory.NewRepository(db), memory.NewOpenAICompatibleEmbeddingProvider()))
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,

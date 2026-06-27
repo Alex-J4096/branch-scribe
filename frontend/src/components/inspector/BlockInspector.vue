@@ -12,6 +12,7 @@ import {
   FileText,
   GitFork,
   MapPin,
+  RefreshCw,
   Save,
   Sparkles,
   SquarePen,
@@ -23,7 +24,7 @@ import RichTextEditor from '@/components/editor/RichTextEditor.vue'
 import type { CanonEntity, ContextPreview, GenerateOnceInput, GenerateOnceResult, ModelProfile, Revision } from '@/api/types'
 
 type InspectorMode = 'all' | 'sidebar' | 'editor' | 'llm'
-type InspectorSection = 'title' | 'associations' | 'editor' | 'llm' | 'fork' | 'revisions'
+type InspectorSection = 'title' | 'associations' | 'summary' | 'editor' | 'llm' | 'fork' | 'revisions'
 
 const props = withDefaults(defineProps<{
   projectId: string
@@ -52,6 +53,8 @@ const selectedCharacterIds = ref<string[]>([])
 const selectedLocationId = ref('')
 const tagsDraft = ref('')
 const generationResult = ref<GenerateOnceResult | null>(null)
+const candidateResults = ref<GenerateOnceResult[]>([])
+const candidateRevisionIds = ref<string[]>([])
 const contextPreview = ref<ContextPreview | null>(null)
 const contextPreviewError = ref('')
 const excludedContextItemIds = ref<string[]>([])
@@ -59,12 +62,14 @@ const showFinalPrompt = ref(false)
 const streamingOutput = ref('')
 const reasoningOutput = ref('')
 const generationError = ref('')
+const summaryError = ref('')
 const isGenerationStreaming = ref(false)
 const draftSavedAt = ref<string | null>(null)
 const restoredLocalDraft = ref(false)
 const openSections = ref({
   title: true,
   associations: false,
+  summary: true,
   editor: true,
   llm: props.mode === 'llm',
   fork: false,
@@ -109,12 +114,25 @@ const locationsQuery = useQuery({
   queryFn: () => api.listCanonEntities(props.projectId, { type: 'location' }),
 })
 
+const summariesQuery = useQuery({
+  queryKey: computed(() => ['summaries', props.projectId]),
+  queryFn: () => api.listSummaries(props.projectId),
+})
+
 const blockDetail = computed(() => blockQuery.data.value)
 const revisions = computed(() => revisionsQuery.data.value ?? [])
-const modelProfiles = computed(() => modelProfilesQuery.data.value ?? [])
+const modelProfiles = computed(() => (modelProfilesQuery.data.value ?? []).filter((profile) => profile.profile_type === 'llm'))
 const characters = computed(() => charactersQuery.data.value ?? [])
 const locations = computed(() => locationsQuery.data.value ?? [])
 const currentRevision = computed(() => blockDetail.value?.current_revision ?? null)
+const currentSummary = computed(() => {
+  const block = blockDetail.value?.block
+  if (!block) return null
+  const targetType = block.type === 'chapter' ? 'chapter' : 'block'
+  return (summariesQuery.data.value ?? []).find(
+    (summary) => summary.target_type === targetType && summary.target_id === block.id,
+  ) ?? null
+})
 const displayTitle = computed(() => blockDetail.value?.block.title || '无标题片段')
 const isContentDirty = computed(() => draftContent.value !== (currentRevision.value?.content ?? ''))
 const wordCount = computed(() => countWords(stripHTML(draftContent.value)))
@@ -174,14 +192,14 @@ const skippedContextItems = computed(() => contextPreview.value?.items.filter((i
 const visibleSections = computed<Set<InspectorSection>>(() => {
   switch (props.mode) {
     case 'sidebar':
-      return new Set(['title', 'associations', 'fork', 'revisions'])
+      return new Set(['title', 'associations', 'summary', 'fork', 'revisions'])
     case 'editor':
       return new Set(['editor'])
     case 'llm':
       return new Set(['llm'])
     case 'all':
     default:
-      return new Set(['title', 'associations', 'editor', 'llm', 'fork', 'revisions'])
+      return new Set(['title', 'associations', 'summary', 'editor', 'llm', 'fork', 'revisions'])
   }
 })
 
@@ -248,6 +266,8 @@ watch(
   () => {
     cancelGeneration()
     generationResult.value = null
+    candidateResults.value = []
+    candidateRevisionIds.value = []
     contextPreview.value = null
     contextPreviewError.value = ''
     excludedContextItemIds.value = []
@@ -321,6 +341,88 @@ const saveGeneratedRevision = useMutation({
   },
 })
 
+const generateCandidates = useMutation({
+  mutationFn: () => {
+    if (!selectedModelProfileId.value) throw new Error('请先选择可用的模型配置')
+    return api.generateCandidates({
+      project_id: props.projectId,
+      block_id: props.blockId,
+      task_type: 'compare_revisions',
+      model_profile_id: selectedModelProfileId.value,
+      user_instruction: generationInstruction.value.trim(),
+      excluded_context_item_ids: excludedContextItemIds.value,
+      count: 2,
+    })
+  },
+  onSuccess: (result) => {
+    candidateResults.value = result.candidates
+    candidateRevisionIds.value = []
+    generationError.value = ''
+  },
+  onError: (error) => {
+    generationError.value = error instanceof Error ? error.message : '候选版本生成失败'
+  },
+})
+
+const saveCandidateRevisions = useMutation({
+  mutationFn: async () => Promise.all(candidateResults.value.map((candidate, index) =>
+    api.createRevision(props.blockId, {
+      parent_revision_id: currentRevision.value?.id ?? null,
+      content: textToHtml(candidate.output_text),
+      content_format: 'html',
+      source: 'llm',
+      generation_run_id: candidate.generation_run.id,
+      metadata: { task_type: 'compare_revisions', candidate_index: index + 1 },
+      set_current: false,
+    }),
+  )),
+  onSuccess: async (saved) => {
+    candidateRevisionIds.value = saved.map((revision) => revision.id)
+    await refreshInspector()
+  },
+})
+
+async function chooseCandidate(index: number) {
+  const revisionId = candidateRevisionIds.value[index]
+  if (!revisionId) return
+  await api.selectRevision(props.blockId, revisionId)
+  candidateResults.value = []
+  candidateRevisionIds.value = []
+  await refreshInspector()
+}
+
+async function expandCandidate(index: number) {
+  const revisionId = candidateRevisionIds.value[index]
+  if (!revisionId) return
+  await api.forkBlock(props.blockId, {
+    title: `${displayTitle.value} · 候选 ${index + 1}`,
+    revision_id: revisionId,
+    position_x: (blockDetail.value?.block.position_x ?? 0) + 260,
+    position_y: (blockDetail.value?.block.position_y ?? 0) + index * 150,
+  })
+  await refreshInspector()
+}
+
+async function expandCandidateToBranch(index: number) {
+  const revisionId = candidateRevisionIds.value[index]
+  const source = blockDetail.value?.block
+  if (!revisionId || !source) return
+  const branch = await api.forkBranch(props.projectId, {
+    name: `${displayTitle.value} · 候选 ${index + 1}`,
+    base_branch_id: source.branch_id,
+    fork_from_block_id: source.id,
+    fork_from_revision_id: revisionId,
+  })
+  await api.forkBlock(props.blockId, {
+    branch_id: branch.id,
+    revision_id: revisionId,
+    title: `${displayTitle.value} · 候选 ${index + 1}`,
+    position_x: source.position_x + 260,
+    position_y: source.position_y + index * 150,
+  })
+  await refreshInspector()
+}
+
 const updateTitle = useMutation({
   mutationFn: () => api.updateBlock(props.blockId, { title: titleDraft.value.trim() || null }),
   onSuccess: refreshInspector,
@@ -357,6 +459,29 @@ const forkBlock = useMutation({
   },
 })
 
+const generateSummary = useMutation({
+  mutationFn: () => {
+    if (!selectedModelProfileId.value) {
+      throw new Error('请先选择可用的模型配置')
+    }
+    const input = {
+      project_id: props.projectId,
+      model_profile_id: selectedModelProfileId.value,
+    }
+    return currentSummary.value
+      ? api.refreshSummary(currentSummary.value.id, input)
+      : api.generateBlockSummary(props.blockId, input)
+  },
+  onSuccess: async () => {
+    summaryError.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['summaries', props.projectId] })
+  },
+  onError: (error) => {
+    summaryError.value = error instanceof Error ? error.message : '摘要生成失败'
+    void queryClient.invalidateQueries({ queryKey: ['summaries', props.projectId] })
+  },
+})
+
 const previewGenerationContext = useMutation({
   mutationFn: () => api.previewGenerationContext(buildGenerateInput()),
   onSuccess: (preview) => {
@@ -374,6 +499,7 @@ async function refreshInspector() {
     queryClient.invalidateQueries({ queryKey: ['block', props.blockId] }),
     queryClient.invalidateQueries({ queryKey: ['revisions', props.blockId] }),
     queryClient.invalidateQueries({ queryKey: ['graph', props.projectId] }),
+    queryClient.invalidateQueries({ queryKey: ['summaries', props.projectId] }),
   ])
   emit('changed')
 }
@@ -824,6 +950,42 @@ function replaceEditorSelectionWithGeneratedContent() {
         </form>
       </section>
 
+      <section v-if="visibleSections.has('summary')" class="inspector-section">
+        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('summary')">
+          <span>
+            <ChevronDown v-if="openSections.summary" :size="16" aria-hidden="true" />
+            <ChevronRight v-else :size="16" aria-hidden="true" />
+            <h2>{{ blockDetail.block.type === 'chapter' ? '章节摘要' : 'Block 摘要' }}</h2>
+          </span>
+          <FileText :size="16" aria-hidden="true" />
+        </button>
+        <div v-show="openSections.summary" class="inspector-section__body summary-panel">
+          <div v-if="currentSummary" class="summary-panel__status" :class="`is-${currentSummary.status}`">
+            <strong>{{ currentSummary.status === 'valid' ? '有效' : currentSummary.status === 'stale' ? '已过期' : '失败' }}</strong>
+            <span>{{ currentSummary.token_count }} tokens · {{ currentSummary.covered_revision_ids.length }} revisions</span>
+          </div>
+          <p v-if="currentSummary" class="summary-panel__text">{{ currentSummary.summary_text }}</p>
+          <div v-else class="empty-state empty-state--compact">尚未生成摘要</div>
+          <div v-if="currentSummary?.status === 'stale'" class="llm-message llm-message--warning">
+            <AlertCircle :size="16" aria-hidden="true" />
+            <span>正文 revision 已变化。该摘要仍可用于前文参考，也可以刷新后再使用。</span>
+          </div>
+          <div v-if="summaryError" class="llm-message llm-message--error">
+            <AlertCircle :size="16" aria-hidden="true" />
+            <span>{{ summaryError }}</span>
+          </div>
+          <button
+            class="button button--primary"
+            type="button"
+            :disabled="!selectedModelProfileId || generateSummary.isPending.value"
+            @click="generateSummary.mutate()"
+          >
+            <RefreshCw :size="16" aria-hidden="true" />
+            {{ generateSummary.isPending.value ? '生成中' : currentSummary ? '刷新摘要' : '生成摘要' }}
+          </button>
+        </div>
+      </section>
+
       <section v-if="visibleSections.has('editor')" class="inspector-section">
         <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('editor')">
           <span>
@@ -939,7 +1101,10 @@ function replaceEditorSelectionWithGeneratedContent() {
                 />
                 <span>
                   <strong>{{ item.title }}</strong>
-                  <small>{{ contextItemTypeLabel(item.type) }} · {{ item.estimated_tokens }} tokens · {{ item.included ? '包含' : '跳过' }}</small>
+                  <small>
+                    {{ contextItemTypeLabel(item.type) }} · {{ item.estimated_tokens }} tokens ·
+                    {{ item.status === 'stale' ? '摘要已过期 · ' : '' }}{{ item.included ? '包含' : '跳过' }}
+                  </small>
                   <em>{{ item.content }}</em>
                 </span>
               </label>
@@ -987,6 +1152,31 @@ function replaceEditorSelectionWithGeneratedContent() {
             </button>
             <button v-if="isGenerationStreaming" class="button" type="button" @click="cancelGeneration">
               取消
+            </button>
+            <button class="button" type="button" :disabled="!canGenerate || generateCandidates.isPending.value" @click="generateCandidates.mutate()">
+              <CopyPlus :size="16" aria-hidden="true" />
+              {{ generateCandidates.isPending.value ? '生成两个候选中' : '生成两个候选' }}
+            </button>
+          </div>
+
+          <div v-if="candidateResults.length === 2" class="candidate-compare">
+            <article v-for="(candidate, index) in candidateResults" :key="candidate.generation_run.id" class="candidate-card">
+              <strong>候选 {{ index + 1 }}</strong>
+              <div class="llm-output__text">{{ candidate.output_text }}</div>
+              <div v-if="candidateRevisionIds[index]" class="inspector__actions">
+                <button class="button button--primary" type="button" @click="chooseCandidate(index)">选择并继续</button>
+                <button class="button" type="button" @click="expandCandidate(index)">展开为 Block</button>
+                <button class="button" type="button" @click="expandCandidateToBranch(index)">展开为分支</button>
+              </div>
+            </article>
+            <button
+              v-if="candidateRevisionIds.length !== 2"
+              class="button button--primary"
+              type="button"
+              :disabled="saveCandidateRevisions.isPending.value"
+              @click="saveCandidateRevisions.mutate()"
+            >
+              保存为两个 Revision
             </button>
           </div>
 

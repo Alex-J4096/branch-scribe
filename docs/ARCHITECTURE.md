@@ -422,6 +422,9 @@ CREATE TABLE model_profiles (
     top_p DOUBLE PRECISION DEFAULT 0.9,
     max_tokens INTEGER DEFAULT 2048,
     context_window INTEGER DEFAULT 32768,
+    profile_type TEXT NOT NULL DEFAULT 'llm',
+    embedding_profile_id UUID REFERENCES model_profiles(id) ON DELETE SET NULL,
+    embedding_dimensions INTEGER,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -979,6 +982,7 @@ DELETE /api/projects/:projectId
 GET    /api/projects/:projectId/branches
 POST   /api/projects/:projectId/branches
 POST   /api/projects/:projectId/branches/fork
+GET    /api/branches/:branchId/path
 PATCH  /api/branches/:branchId
 DELETE /api/branches/:branchId
 ```
@@ -1062,6 +1066,7 @@ POST   /api/summaries/:summaryId/refresh
 ```http
 POST   /api/generate/stream
 POST   /api/generate/once
+POST   /api/generate/candidates
 POST   /api/generate/context-preview
 GET    /api/projects/:projectId/generation-runs
 GET    /api/generation-runs/:runId
@@ -1466,8 +1471,8 @@ branchscribe/
 * [x] 实现 Canon Entity CRUD。
 * [x] 支持 entity 类型：character、location、faction、item、rule、event。
 * [x] 实现 Memory Chunk CRUD。
-* [ ] 实现 embedding provider。（暂缓）
-* [ ] 实现 memory semantic search。（暂缓，当前使用关键词检索）
+* [x] 实现 embedding provider。
+* [x] 实现 memory semantic search。
 * [x] 实现 canon entity keyword search。
 * [x] 支持为 block 关联 characters、location、tags。
 * [x] 支持从 block 生成 memory chunk。
@@ -1482,7 +1487,7 @@ branchscribe/
 * [x] 在 block inspector 中添加 metadata 编辑。
 * [x] 支持为 block 选择出现角色。
 * [x] 支持为 block 选择地点。
-* [ ] 支持手动触发 reindex。（暂缓）
+* [x] 支持手动触发 reindex。
 * [x] 显示当前 block 关联的 canon entities。
 
 ### 验收标准
@@ -1492,7 +1497,7 @@ branchscribe/
 * [x] 用户可以创建世界观规则。
 * [x] 用户可以将角色和地点关联到 block。
 * [x] LLM 生成时可以读取相关 canon。
-* [x] 系统可以根据文本检索相关 memory chunks。
+* [x] 系统可以通过关键词或向量语义检索相关 memory chunks。
 
 ---
 
@@ -1551,31 +1556,31 @@ branchscribe/
 
 ### 后端任务
 
-* [ ] 实现 block summary。
-* [ ] 实现 chapter summary。
-* [ ] 实现 branch summary。
-* [ ] 实现 summary refresh。
-* [ ] 实现 summary stale 检测。
-* [ ] 当 block current revision 改变时，标记相关 summary stale。
-* [ ] Context Builder 优先使用 valid summary。
-* [ ] 如果 summary stale，返回提示，MVP 可不自动刷新。
+* [x] 实现 block summary。
+* [x] 实现 chapter summary。
+* [x] 实现 branch summary。
+* [x] 实现 summary refresh。
+* [x] 实现 summary stale 检测。
+* [x] 当 block current revision 改变时，标记相关 summary stale。
+* [x] Context Builder 优先使用 valid summary。
+* [x] 如果 summary stale，返回提示，MVP 可不自动刷新。
 
 ### 前端任务
 
-* [ ] 在 block 上显示摘要状态。
-* [ ] 在 chapter 或 branch 上显示摘要状态。
-* [ ] 支持手动生成摘要。
-* [ ] 支持手动刷新摘要。
-* [ ] 在 Context Preview 中展示摘要来源。
-* [ ] 提示用户哪些摘要已过期。
+* [x] 在 block 上显示摘要状态。
+* [x] 在 chapter 或 branch 上显示摘要状态。
+* [x] 支持手动生成摘要。
+* [x] 支持手动刷新摘要。
+* [x] 在 Context Preview 中展示摘要来源。
+* [x] 提示用户哪些摘要已过期。
 
 ### 验收标准
 
-* [ ] 用户可以为 block 生成摘要。
-* [ ] 用户可以为 branch 生成摘要。
-* [ ] 修改 block 后，相关摘要会被标记为 stale。
-* [ ] LLM 生成时可以使用摘要代替远距离全文。
-* [ ] 用户侧仍然可以查看完整正文。
+* [x] 用户可以为 block 生成摘要。
+* [x] 用户可以为 branch 生成摘要。
+* [x] 修改 block 后，相关摘要会被标记为 stale。
+* [x] LLM 生成时可以使用摘要代替远距离全文。
+* [x] 用户侧仍然可以查看完整正文。
 
 ---
 
@@ -1585,31 +1590,31 @@ branchscribe/
 
 ### 后端任务
 
-* [ ] 实现 branch path 查询。
-* [ ] 支持从任意 block 创建新 branch。
-* [ ] 支持将某个 revision 作为 branch 起点。
-* [ ] 实现 compare_revisions LLM task。
-* [ ] 实现生成两个候选版本。
-* [ ] 支持将候选版本分别保存为不同 revision。
-* [ ] 支持将候选版本展开为不同 block 或 branch。
+* [x] 实现 branch path 查询。
+* [x] 支持从任意 block 创建新 branch。
+* [x] 支持将某个 revision 作为 branch 起点。
+* [x] 实现 compare_revisions LLM task。
+* [x] 实现生成两个候选版本。
+* [x] 支持将候选版本分别保存为不同 revision。
+* [x] 支持将候选版本展开为不同 block 或 branch。
 
 ### 前端任务
 
-* [ ] 在图上明确显示 fork edge。
-* [ ] 显示 branch 颜色。
-* [ ] 支持切换当前 branch。
-* [ ] 支持从 block 右键 fork。
-* [ ] 支持一键生成两个候选版本。
-* [ ] 支持候选版本并排比较。
-* [ ] 支持选择某个候选版本继续故事线。
-* [ ] 支持归档不使用的 branch。
+* [x] 在图上明确显示 fork edge。
+* [x] 显示 branch 颜色。
+* [x] 支持切换当前 branch。
+* [x] 支持从 block 右键 fork。
+* [x] 支持一键生成两个候选版本。
+* [x] 支持候选版本并排比较。
+* [x] 支持选择某个候选版本继续故事线。
+* [x] 支持归档不使用的 branch。
 
 ### 验收标准
 
-* [ ] 用户可以从某个节点直接分叉两条线路。
-* [ ] 用户可以对同一 block 生成两个不同版本。
-* [ ] 用户可以比较两个版本并选择一个继续。
-* [ ] 图上可以清楚看到故事分叉。
+* [x] 用户可以从某个节点直接分叉两条线路。
+* [x] 用户可以对同一 block 生成两个不同版本。
+* [x] 用户可以比较两个版本并选择一个继续。
+* [x] 图上可以清楚看到故事分叉。
 
 ---
 

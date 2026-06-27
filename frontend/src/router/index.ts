@@ -5,6 +5,7 @@ import ProjectWorkspace from '@/views/ProjectWorkspace.vue'
 import ModelProfileSettings from '@/views/ModelProfileSettings.vue'
 import CanonManager from '@/views/CanonManager.vue'
 import MemoryManager from '@/views/MemoryManager.vue'
+import BlockTool from '@/views/BlockTool.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -18,6 +19,11 @@ export const router = createRouter({
       path: '/projects/:projectId',
       name: 'workspace',
       component: ProjectWorkspace,
+    },
+    {
+      path: '/projects/:projectId/blocks/:blockId/tool',
+      name: 'block-tool',
+      component: BlockTool,
     },
     {
       path: '/projects/:projectId/model-profiles',

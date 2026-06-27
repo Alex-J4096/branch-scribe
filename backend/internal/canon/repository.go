@@ -104,6 +104,7 @@ func (r *Repository) Get(ctx context.Context, entityID string) (Entity, error) {
 func (r *Repository) Update(ctx context.Context, entityID string, req UpdateEntityRequest) (Entity, error) {
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 9)
+	embeddingChanged := false
 
 	if req.Type != nil {
 		entityType := normalizeType(*req.Type)
@@ -112,6 +113,7 @@ func (r *Repository) Update(ctx context.Context, entityID string, req UpdateEnti
 		}
 		args = append(args, entityType)
 		setClauses = append(setClauses, fmt.Sprintf("type = $%d", len(args)))
+		embeddingChanged = true
 	}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
@@ -120,14 +122,17 @@ func (r *Repository) Update(ctx context.Context, entityID string, req UpdateEnti
 		}
 		args = append(args, name)
 		setClauses = append(setClauses, fmt.Sprintf("name = $%d", len(args)))
+		embeddingChanged = true
 	}
 	if req.Aliases != nil {
 		args = append(args, normalizeAliases(req.Aliases))
 		setClauses = append(setClauses, fmt.Sprintf("aliases = $%d", len(args)))
+		embeddingChanged = true
 	}
 	if req.Description != nil {
 		args = append(args, nullableString(normalizeOptionalString(req.Description)))
 		setClauses = append(setClauses, fmt.Sprintf("description = $%d", len(args)))
+		embeddingChanged = true
 	}
 	if len(req.Attributes) > 0 {
 		if !json.Valid(req.Attributes) {
@@ -135,6 +140,7 @@ func (r *Repository) Update(ctx context.Context, entityID string, req UpdateEnti
 		}
 		args = append(args, req.Attributes)
 		setClauses = append(setClauses, fmt.Sprintf("attributes = $%d", len(args)))
+		embeddingChanged = true
 	}
 	if req.Importance != nil {
 		if *req.Importance < 1 || *req.Importance > 10 {
@@ -153,6 +159,9 @@ func (r *Repository) Update(ctx context.Context, entityID string, req UpdateEnti
 	}
 	if len(setClauses) == 0 {
 		return r.Get(ctx, entityID)
+	}
+	if embeddingChanged {
+		setClauses = append(setClauses, "embedding = NULL")
 	}
 
 	args = append(args, entityID)

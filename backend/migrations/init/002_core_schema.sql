@@ -136,6 +136,9 @@ CREATE TABLE IF NOT EXISTS model_profiles (
     top_p DOUBLE PRECISION NOT NULL DEFAULT 0.9,
     max_tokens INTEGER NOT NULL DEFAULT 2048,
     context_window INTEGER NOT NULL DEFAULT 32768,
+    profile_type TEXT NOT NULL DEFAULT 'llm',
+    embedding_profile_id UUID REFERENCES model_profiles(id) ON DELETE SET NULL,
+    embedding_dimensions INTEGER,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -143,7 +146,9 @@ CREATE TABLE IF NOT EXISTS model_profiles (
     CONSTRAINT model_profiles_temperature_check CHECK (temperature >= 0 AND temperature <= 2),
     CONSTRAINT model_profiles_top_p_check CHECK (top_p >= 0 AND top_p <= 1),
     CONSTRAINT model_profiles_max_tokens_check CHECK (max_tokens > 0),
-    CONSTRAINT model_profiles_context_window_check CHECK (context_window > 0)
+    CONSTRAINT model_profiles_context_window_check CHECK (context_window > 0),
+    CONSTRAINT model_profiles_profile_type_check CHECK (profile_type IN ('llm', 'embedding')),
+    CONSTRAINT model_profiles_embedding_dimensions_check CHECK (embedding_dimensions IS NULL OR embedding_dimensions > 0)
 );
 
 CREATE TABLE IF NOT EXISTS prompt_templates (

@@ -37,6 +37,11 @@ export type Branch = {
   updated_at: string
 }
 
+export type BranchPath = {
+  branch: Branch
+  blocks: Block[]
+}
+
 export type Block = {
   id: string
   project_id: string
@@ -111,6 +116,7 @@ export type MemoryChunk = {
   tags: string[]
   metadata: Record<string, unknown>
   created_at: string
+  similarity?: number
 }
 
 export type ModelProfile = {
@@ -125,6 +131,9 @@ export type ModelProfile = {
   top_p: number
   max_tokens: number
   context_window: number
+  profile_type: 'llm' | 'embedding'
+  embedding_profile_id: string | null
+  embedding_dimensions: number | null
   metadata: Record<string, unknown>
   created_at: string
   updated_at: string
@@ -185,6 +194,26 @@ export type ContextItem = {
   estimated_tokens: number
   included: boolean
   required: boolean
+  status?: 'valid' | 'stale'
+}
+
+export type SummarySnapshot = {
+  id: string
+  project_id: string
+  target_type: 'block' | 'chapter' | 'branch'
+  target_id: string
+  summary_text: string
+  covered_revision_ids: string[]
+  token_count: number
+  model: string | null
+  status: 'valid' | 'stale' | 'failed'
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export type GenerateSummaryInput = {
+  project_id: string
+  model_profile_id: string
 }
 
 export type ContextPreview = {
@@ -208,6 +237,10 @@ export type GenerateOnceResult = {
   context_preview: ContextPreview
   model_profile_id: string
   prompt_template_id: string | null
+}
+
+export type GenerateCandidatesResult = {
+  candidates: GenerateOnceResult[]
 }
 
 export type GenerateStreamEvent = {
@@ -284,6 +317,16 @@ export type MemorySearchInput = {
   source_type?: string
   chunk_kind?: string
   tag?: string
+  mode?: 'keyword' | 'semantic'
+  model_profile_id?: string
+  limit?: number
+}
+
+export type MemoryReindexResult = {
+  memory_indexed: number
+  canon_indexed: number
+  model: string
+  dimensions: number
 }
 
 export type ModelProfileInput = {
@@ -297,6 +340,11 @@ export type ModelProfileInput = {
   top_p?: number
   max_tokens?: number
   context_window?: number
+  profile_type?: ModelProfile['profile_type']
+  embedding_profile_id?: string | null
+  clear_embedding_profile?: boolean
+  embedding_dimensions?: number | null
+  metadata?: Record<string, unknown>
 }
 
 export type PromptTemplateInput = {

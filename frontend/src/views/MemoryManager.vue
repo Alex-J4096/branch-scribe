@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, Database, Edit3, Save, Search, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Brain, Database, Edit3, RefreshCw, Save, Search, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api/client'
@@ -15,6 +15,10 @@ const projectId = computed(() => String(route.params.projectId))
 const searchQuery = ref('')
 const chunkKindFilter = ref('')
 const tagFilter = ref('')
+const searchMode = ref<'keyword' | 'semantic'>('keyword')
+const embeddingProfileId = ref('')
+const semanticResults = ref<MemoryChunk[] | null>(null)
+const embeddingMessage = ref('')
 const blockIdForMemory = ref('')
 const blockTagsDraft = ref('')
 const editingId = ref<string | null>(null)
@@ -28,13 +32,18 @@ const form = ref({
 })
 
 const memoryQuery = useQuery({
-  queryKey: computed(() => ['memory-manager', projectId.value, searchQuery.value, chunkKindFilter.value, tagFilter.value]),
+  queryKey: computed(() => ['memory-manager', projectId.value, searchMode.value, searchQuery.value, chunkKindFilter.value, tagFilter.value]),
   queryFn: () =>
     api.listMemoryChunks(projectId.value, {
-      q: searchQuery.value.trim() || undefined,
+      q: searchMode.value === 'keyword' ? searchQuery.value.trim() || undefined : undefined,
       chunk_kind: chunkKindFilter.value.trim() || undefined,
       tag: tagFilter.value.trim() || undefined,
     }),
+})
+
+const profilesQuery = useQuery({
+  queryKey: computed(() => ['model-profiles', projectId.value]),
+  queryFn: () => api.listModelProfiles(projectId.value),
 })
 
 const graphQuery = useQuery({
@@ -42,9 +51,31 @@ const graphQuery = useQuery({
   queryFn: () => api.getGraph(projectId.value),
 })
 
-const chunks = computed(() => memoryQuery.data.value ?? [])
+const embeddingProfiles = computed(() =>
+  (profilesQuery.data.value ?? []).filter((profile) => profile.profile_type === 'embedding'),
+)
+const chunks = computed(() =>
+  searchMode.value === 'semantic' && semanticResults.value
+    ? semanticResults.value
+    : memoryQuery.data.value ?? [],
+)
 const blocks = computed(() => graphQuery.data.value?.nodes ?? [])
 const editingChunk = computed(() => chunks.value.find((chunk) => chunk.id === editingId.value) ?? null)
+
+watch(
+  embeddingProfiles,
+  (profiles) => {
+    if (!profiles.some((profile) => profile.id === embeddingProfileId.value)) {
+      embeddingProfileId.value = profiles[0]?.id ?? ''
+    }
+  },
+  { immediate: true },
+)
+
+watch(searchMode, () => {
+  semanticResults.value = null
+  embeddingMessage.value = ''
+})
 
 const saveChunk = useMutation({
   mutationFn: () => {
@@ -78,6 +109,37 @@ const deleteChunk = useMutation({
   onSuccess: async () => {
     resetForm()
     await queryClient.invalidateQueries({ queryKey: ['memory-manager', projectId.value] })
+  },
+})
+
+const semanticSearch = useMutation({
+  mutationFn: () =>
+    api.searchMemoryChunks(projectId.value, {
+      q: searchQuery.value.trim(),
+      chunk_kind: chunkKindFilter.value.trim() || undefined,
+      tag: tagFilter.value.trim() || undefined,
+      mode: 'semantic',
+      model_profile_id: embeddingProfileId.value,
+      limit: 20,
+    }),
+  onSuccess: (results) => {
+    semanticResults.value = results
+    embeddingMessage.value = `找到 ${results.length} 条语义相关记忆`
+  },
+  onError: (error) => {
+    embeddingMessage.value = error instanceof Error ? error.message : '语义搜索失败'
+  },
+})
+
+const reindexMemory = useMutation({
+  mutationFn: () => api.reindexMemory(projectId.value, embeddingProfileId.value),
+  onSuccess: async (result) => {
+    semanticResults.value = null
+    embeddingMessage.value = `索引完成：${result.memory_indexed} 条 Memory、${result.canon_indexed} 条 Canon，${result.dimensions} 维`
+    await queryClient.invalidateQueries({ queryKey: ['memory-manager', projectId.value] })
+  },
+  onError: (error) => {
+    embeddingMessage.value = error instanceof Error ? error.message : 'Reindex 失败'
   },
 })
 
@@ -215,15 +277,54 @@ function blockLabel(blockId: string) {
             生成 Memory
           </button>
         </form>
+
+        <section class="manager-form">
+          <h2>Embedding 索引</h2>
+          <label class="field-label">
+            <span>Embedding Profile</span>
+            <select v-model="embeddingProfileId">
+              <option value="" disabled>选择已配置 embedding model 的 Profile</option>
+              <option v-for="profile in embeddingProfiles" :key="profile.id" :value="profile.id">
+                {{ profile.name }} · {{ profile.model }}
+              </option>
+            </select>
+          </label>
+          <p v-if="!embeddingProfiles.length" class="settings-form__hint">
+            请先在模型设置中为一个 Profile 配置 Embedding model。
+          </p>
+          <button
+            class="button"
+            type="button"
+            :disabled="!embeddingProfileId || reindexMemory.isPending.value"
+            @click="reindexMemory.mutate()"
+          >
+            <RefreshCw :size="16" aria-hidden="true" />
+            {{ reindexMemory.isPending.value ? '索引中' : 'Reindex Memory + Canon' }}
+          </button>
+          <p v-if="embeddingMessage" class="settings-form__hint">{{ embeddingMessage }}</p>
+        </section>
       </div>
 
       <section class="manager-list">
         <div class="manager-list__filters">
           <label class="field-label">
+            <span>搜索模式</span>
+            <select v-model="searchMode">
+              <option value="keyword">关键词</option>
+              <option value="semantic">语义向量</option>
+            </select>
+          </label>
+          <label class="field-label">
             <span>搜索</span>
             <div class="input-with-icon">
-              <Search :size="15" aria-hidden="true" />
-              <input v-model="searchQuery" type="text" placeholder="正文关键词" />
+              <Brain v-if="searchMode === 'semantic'" :size="15" aria-hidden="true" />
+              <Search v-else :size="15" aria-hidden="true" />
+              <input
+                v-model="searchQuery"
+                type="text"
+                :placeholder="searchMode === 'semantic' ? '描述想查找的情节或设定' : '正文关键词'"
+                @keyup.enter="searchMode === 'semantic' && semanticSearch.mutate()"
+              />
             </div>
           </label>
           <label class="field-label">
@@ -234,6 +335,16 @@ function blockLabel(blockId: string) {
             <span>Tag</span>
             <input v-model="tagFilter" type="text" />
           </label>
+          <button
+            v-if="searchMode === 'semantic'"
+            class="button button--primary"
+            type="button"
+            :disabled="!searchQuery.trim() || !embeddingProfileId || semanticSearch.isPending.value"
+            @click="semanticSearch.mutate()"
+          >
+            <Brain :size="16" aria-hidden="true" />
+            {{ semanticSearch.isPending.value ? '检索中' : '语义搜索' }}
+          </button>
         </div>
 
         <div v-if="memoryQuery.isLoading.value" class="empty-state">正在加载</div>
@@ -244,6 +355,7 @@ function blockLabel(blockId: string) {
             <p>{{ chunk.chunk_text }}</p>
             <div class="manager-item__meta">
               <span>{{ chunk.source_type }}</span>
+              <span v-if="chunk.similarity !== undefined">相似度 {{ (chunk.similarity * 100).toFixed(1) }}%</span>
               <span v-for="tag in chunk.tags" :key="tag">{{ tag }}</span>
             </div>
           </div>

@@ -48,6 +48,21 @@ type UpdateBranchRequest struct {
 	Metadata    json.RawMessage `json:"metadata"`
 }
 
+type BranchPath struct {
+	Branch Branch      `json:"branch"`
+	Blocks []PathBlock `json:"blocks"`
+}
+
+type PathBlock struct {
+	ID                string          `json:"id"`
+	BranchID          *string         `json:"branch_id"`
+	Title             *string         `json:"title"`
+	Type              string          `json:"type"`
+	CurrentRevisionID *string         `json:"current_revision_id"`
+	OrderIndex        int             `json:"order_index"`
+	Metadata          json.RawMessage `json:"metadata"`
+}
+
 func normalizeName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {

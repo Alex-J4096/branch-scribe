@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ArrowLeft, Bot, KeyRound, Plus, Save, SlidersHorizontal, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Bot, Database, KeyRound, Plus, Save, SlidersHorizontal, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api/client'
@@ -13,6 +13,9 @@ const queryClient = useQueryClient()
 
 const projectId = computed(() => String(route.params.projectId))
 const selectedProfileId = ref<string | null>(null)
+const profileType = ref<ModelProfile['profile_type']>('llm')
+const embeddingDimensions = ref<number | null>(null)
+const linkedEmbeddingProfileId = ref('')
 
 const providerBaseUrls: Partial<Record<ModelProfileInput['provider'], string>> = {
   openai: 'https://api.openai.com/v1',
@@ -45,6 +48,8 @@ const profilesQuery = useQuery({
 })
 
 const profiles = computed(() => profilesQuery.data.value ?? [])
+const llmProfiles = computed(() => profiles.value.filter((profile) => profile.profile_type === 'llm'))
+const embeddingProfiles = computed(() => profiles.value.filter((profile) => profile.profile_type === 'embedding'))
 const selectedProfile = computed(() => profiles.value.find((profile) => profile.id === selectedProfileId.value) ?? null)
 const providerDefaultBaseUrl = computed(() => providerBaseUrls[form.provider] ?? '')
 const apiKeyStatusLabel = computed(() => {
@@ -62,7 +67,7 @@ watch(
   profiles,
   (value) => {
     if (!selectedProfileId.value && value[0]) {
-      selectProfile(value[0])
+      selectProfile(value.find((profile) => profile.profile_type === 'llm') ?? value[0])
     }
   },
   { immediate: true },
@@ -110,10 +115,14 @@ function selectProfile(profile: ModelProfile) {
   form.top_p = profile.top_p
   form.max_tokens = profile.max_tokens
   form.context_window = profile.context_window
+  profileType.value = profile.profile_type
+  embeddingDimensions.value = profile.embedding_dimensions
+  linkedEmbeddingProfileId.value = profile.embedding_profile_id ?? ''
 }
 
-function resetForm() {
+function resetForm(type: ModelProfile['profile_type'] = 'llm') {
   selectedProfileId.value = null
+  profileType.value = type
   form.name = ''
   form.provider = 'openai_compatible'
   form.model = ''
@@ -123,6 +132,8 @@ function resetForm() {
   form.top_p = 0.9
   form.max_tokens = 2048
   form.context_window = 32768
+  embeddingDimensions.value = null
+  linkedEmbeddingProfileId.value = ''
 }
 
 watch(
@@ -155,6 +166,13 @@ function sanitizeForm(): ModelProfileInput {
     top_p: Number(form.top_p),
     max_tokens: Number(form.max_tokens),
     context_window: Number(form.context_window),
+    profile_type: profileType.value,
+    embedding_profile_id: profileType.value === 'llm' ? linkedEmbeddingProfileId.value || null : null,
+    clear_embedding_profile: profileType.value === 'llm' && !linkedEmbeddingProfileId.value,
+    embedding_dimensions: profileType.value === 'embedding' && embeddingDimensions.value
+      ? Number(embeddingDimensions.value)
+      : null,
+    metadata: selectedProfile.value?.metadata ?? {},
   }
 }
 </script>
@@ -169,24 +187,25 @@ function sanitizeForm(): ModelProfileInput {
         <strong>{{ projectQuery.data.value?.name ?? 'BranchScribe' }}</strong>
         <span>模型配置</span>
       </div>
-      <button class="button" type="button" @click="resetForm">
+      <button class="button" type="button" @click="resetForm('llm')">
         <Plus :size="16" aria-hidden="true" />
-        新建
+        新建 LLM
+      </button>
+      <button class="button" type="button" @click="resetForm('embedding')">
+        <Plus :size="16" aria-hidden="true" />
+        新建 Embedding
       </button>
     </header>
 
     <section class="settings-page__body">
       <aside class="settings-list">
         <div class="settings-list__header">
-          <span>Profiles</span>
-          <button class="icon-button" type="button" title="新建模型" @click="resetForm">
-            <Plus :size="15" aria-hidden="true" />
-          </button>
+          <span>LLM Profiles</span>
         </div>
         <div v-if="profilesQuery.isLoading.value" class="empty-state empty-state--compact">正在加载模型</div>
         <div v-else-if="profiles.length === 0" class="empty-state empty-state--compact">暂无模型</div>
         <button
-          v-for="profile in profiles"
+          v-for="profile in llmProfiles"
           :key="profile.id"
           class="settings-list__item"
           :class="{ 'is-active': profile.id === selectedProfileId }"
@@ -200,13 +219,31 @@ function sanitizeForm(): ModelProfileInput {
             <b :class="{ 'is-ready': profile.has_api_key }">{{ profile.has_api_key ? 'Key' : 'No key' }}</b>
           </small>
         </button>
+        <div class="settings-list__header">
+          <span>Embedding Profiles</span>
+        </div>
+        <button
+          v-for="profile in embeddingProfiles"
+          :key="profile.id"
+          class="settings-list__item"
+          :class="{ 'is-active': profile.id === selectedProfileId }"
+          type="button"
+          @click="selectProfile(profile)"
+        >
+          <strong>{{ profile.name }}</strong>
+          <span>{{ profile.model }}</span>
+          <small>
+            <em>{{ profile.provider }}</em>
+            <b :class="{ 'is-ready': profile.has_api_key }">{{ profile.embedding_dimensions || '默认' }} 维</b>
+          </small>
+        </button>
       </aside>
 
       <form class="settings-form" @submit.prevent="submitProfile">
         <div class="settings-form__header">
           <div>
-            <h1>{{ selectedProfile ? form.name || '编辑模型' : '新建模型' }}</h1>
-            <p>{{ form.provider }} · {{ form.model || 'model' }}</p>
+            <h1>{{ selectedProfile ? form.name || '编辑模型' : profileType === 'llm' ? '新建 LLM' : '新建 Embedding' }}</h1>
+            <p>{{ profileType === 'llm' ? 'LLM' : 'Embedding' }} · {{ form.provider }} · {{ form.model || 'model' }}</p>
           </div>
           <Bot :size="22" aria-hidden="true" />
         </div>
@@ -239,8 +276,8 @@ function sanitizeForm(): ModelProfileInput {
               <input v-model="form.base_url" type="url" :placeholder="providerDefaultBaseUrl || 'https://api.openai.com/v1'" />
             </label>
             <label>
-              <span>Model</span>
-              <input v-model="form.model" type="text" placeholder="gpt-4.1-mini" />
+              <span>{{ profileType === 'llm' ? 'LLM Model' : 'Embedding Model' }}</span>
+              <input v-model="form.model" type="text" :placeholder="profileType === 'llm' ? 'gpt-4.1-mini' : 'Qwen/Qwen3-Embedding-0.6B'" />
             </label>
             <label class="settings-form__wide">
               <span>API key · {{ apiKeyStatusLabel }}</span>
@@ -250,7 +287,44 @@ function sanitizeForm(): ModelProfileInput {
           </div>
         </section>
 
-        <section class="settings-group">
+        <section v-if="profileType === 'llm'" class="settings-group">
+          <div class="settings-group__header">
+            <h2>Embedding</h2>
+            <Database :size="17" aria-hidden="true" />
+          </div>
+          <div class="settings-form__grid">
+            <label class="settings-form__wide">
+              <span>主 LLM 使用的 Embedding Profile</span>
+              <select v-model="linkedEmbeddingProfileId">
+                <option value="">不关联</option>
+                <option v-for="profile in embeddingProfiles" :key="profile.id" :value="profile.id">
+                  {{ profile.name }} · {{ profile.model }}
+                </option>
+              </select>
+            </label>
+            <p class="settings-form__hint settings-form__wide">
+              Embedding Profile 拥有独立的 Provider、Base URL 和 API key。
+            </p>
+          </div>
+        </section>
+
+        <section v-else class="settings-group">
+          <div class="settings-group__header">
+            <h2>Embedding 参数</h2>
+            <Database :size="17" aria-hidden="true" />
+          </div>
+          <div class="settings-form__grid">
+            <label>
+              <span>Dimensions（可选）</span>
+              <input v-model.number="embeddingDimensions" type="number" min="1" placeholder="由模型默认决定" />
+            </label>
+            <p class="settings-form__hint settings-form__wide">
+              该 Profile 专用于 `/embeddings`，不会出现在正文生成模型选择中。
+            </p>
+          </div>
+        </section>
+
+        <section v-if="profileType === 'llm'" class="settings-group">
           <div class="settings-group__header">
             <h2>Generation</h2>
             <SlidersHorizontal :size="17" aria-hidden="true" />

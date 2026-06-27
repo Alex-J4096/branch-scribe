@@ -10,6 +10,7 @@ import type { ProjectGraph } from '@/api/types'
 const props = defineProps<{
   projectId: string
   graph: ProjectGraph
+  branchColors?: Record<string, string>
   selectedBlockId: string | null
   selectedEdgeId: string | null
 }>()
@@ -17,6 +18,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectBlock: [blockId: string | null]
   selectEdge: [edgeId: string | null]
+  forkBlock: [blockId: string]
 }>()
 
 const queryClient = useQueryClient()
@@ -57,6 +59,9 @@ function buildFlowNodes(): Node[] {
     data: {
       label: `${block.title || `片段 #${index + 1}`} · ${block.type}`,
     },
+    style: block.branch_id && props.branchColors?.[block.branch_id]
+      ? { borderColor: props.branchColors[block.branch_id], borderWidth: '3px' }
+      : undefined,
     class: block.id === props.selectedBlockId ? 'story-node is-selected' : 'story-node',
   }))
 }
@@ -257,7 +262,7 @@ async function updatePosition(event: { node: Node }) {
     </svg>
 
     <template #node-default="{ id, data, selected }">
-      <div class="story-node__body" :class="{ 'is-selected': selected }" :data-block-id="id">
+      <div class="story-node__body" :class="{ 'is-selected': selected }" :data-block-id="id" @contextmenu.prevent="emit('forkBlock', String(id))">
         <Handle
           id="target"
           class="story-node__handle story-node__handle--target"

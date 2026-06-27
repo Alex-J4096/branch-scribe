@@ -19,10 +19,20 @@ func NewHandler(repo *Repository) *Handler {
 
 func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	router.GET("/projects/:projectId/branches", handler.List)
+	router.GET("/branches/:branchId/path", handler.Path)
 	router.POST("/projects/:projectId/branches", handler.Create)
 	router.POST("/projects/:projectId/branches/fork", handler.Fork)
 	router.PATCH("/branches/:branchId", handler.Update)
 	router.DELETE("/branches/:branchId", handler.Delete)
+}
+
+func (h *Handler) Path(c *gin.Context) {
+	path, err := h.repo.Path(c.Request.Context(), c.Param("branchId"))
+	if err != nil {
+		respondBranchError(c, err, "BRANCH_PATH_FAILED", "failed to get branch path")
+		return
+	}
+	api.RespondOK(c, path)
 }
 
 func (h *Handler) List(c *gin.Context) {

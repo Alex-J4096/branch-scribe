@@ -26,6 +26,7 @@ type Chunk struct {
 	Tags       []string        `json:"tags"`
 	Metadata   json.RawMessage `json:"metadata"`
 	CreatedAt  time.Time       `json:"created_at"`
+	Similarity *float64        `json:"similarity,omitempty"`
 }
 
 type CreateChunkRequest struct {
@@ -53,10 +54,13 @@ type CreateFromBlockRequest struct {
 }
 
 type SearchRequest struct {
-	Query      string `json:"q"`
-	SourceType string `json:"source_type"`
-	ChunkKind  string `json:"chunk_kind"`
-	Tag        string `json:"tag"`
+	Query          string `json:"q"`
+	SourceType     string `json:"source_type"`
+	ChunkKind      string `json:"chunk_kind"`
+	Tag            string `json:"tag"`
+	Mode           string `json:"mode"`
+	ModelProfileID string `json:"model_profile_id"`
+	Limit          int    `json:"limit"`
 }
 
 type ListFilter struct {
@@ -64,6 +68,31 @@ type ListFilter struct {
 	ChunkKind  string
 	Tag        string
 	Query      string
+}
+
+type ReindexRequest struct {
+	ModelProfileID string `json:"model_profile_id"`
+}
+
+type ReindexResult struct {
+	MemoryIndexed int    `json:"memory_indexed"`
+	CanonIndexed  int    `json:"canon_indexed"`
+	Model         string `json:"model"`
+	Dimensions    int    `json:"dimensions"`
+}
+
+type EmbeddingProfile struct {
+	ID         string
+	Provider   string
+	BaseURL    string
+	APIKey     string
+	Model      string
+	Dimensions int
+}
+
+type EmbeddingDocument struct {
+	ID   string
+	Text string
 }
 
 func (req CreateChunkRequest) normalized() (CreateChunkRequest, error) {

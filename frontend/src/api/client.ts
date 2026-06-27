@@ -5,6 +5,7 @@ import type {
   BlockAssociationsInput,
   BlockDetail,
   Branch,
+  BranchPath,
   CanonEntity,
   CanonEntityInput,
   CreateBlockInput,
@@ -15,17 +16,21 @@ import type {
   ContextPreview,
   GenerateOnceInput,
   GenerateOnceResult,
+  GenerateCandidatesResult,
   GenerateStreamEvent,
   GraphEdge,
+  GenerateSummaryInput,
   MemoryChunk,
   MemoryChunkFromBlockInput,
   MemoryChunkInput,
   MemorySearchInput,
+  MemoryReindexResult,
   ModelProfile,
   PromptTemplate,
   Project,
   ProjectGraph,
   Revision,
+  SummarySnapshot,
 } from './types'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api'
@@ -51,16 +56,33 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   })
 
-  const envelope = (await response.json()) as ApiEnvelope<T> | ApiErrorEnvelope
-  if (!response.ok || envelope.error) {
-    const error = envelope.error ?? {
+  const responseText = await response.text()
+  const envelope = parseEnvelope<T>(responseText)
+  if (!response.ok) {
+    const error = envelope?.error ?? {
       code: 'HTTP_ERROR',
-      message: `Request failed with status ${response.status}`,
+      message: responseText.trim() || `Request failed with status ${response.status}`,
+    }
+    throw new ApiClientError(response.status, error.code, error.message)
+  }
+  if (!envelope || envelope.error) {
+    const error = envelope?.error ?? {
+      code: 'INVALID_API_RESPONSE',
+      message: 'Server returned an invalid JSON response',
     }
     throw new ApiClientError(response.status, error.code, error.message)
   }
 
   return envelope.data
+}
+
+function parseEnvelope<T>(text: string): ApiEnvelope<T> | ApiErrorEnvelope | null {
+  if (!text.trim()) return null
+  try {
+    return JSON.parse(text) as ApiEnvelope<T> | ApiErrorEnvelope
+  } catch {
+    return null
+  }
 }
 
 async function generateStream(
@@ -79,10 +101,11 @@ async function generateStream(
   })
 
   if (!response.ok) {
-    const envelope = (await response.json()) as ApiErrorEnvelope
-    const error = envelope.error ?? {
+    const responseText = await response.text()
+    const envelope = parseEnvelope<never>(responseText)
+    const error = envelope?.error ?? {
       code: 'HTTP_ERROR',
-      message: `Request failed with status ${response.status}`,
+      message: responseText.trim() || `Request failed with status ${response.status}`,
     }
     throw new ApiClientError(response.status, error.code, error.message)
   }
@@ -160,6 +183,25 @@ export const api = {
     }),
 
   listBranches: (projectId: string) => request<Branch[]>(`/projects/${projectId}/branches`),
+  getBranchPath: (branchId: string) => request<BranchPath>(`/branches/${branchId}/path`),
+  forkBranch: (
+    projectId: string,
+    input: {
+      name: string
+      base_branch_id?: string | null
+      fork_from_block_id: string
+      fork_from_revision_id?: string | null
+    },
+  ) =>
+    request<Branch>(`/projects/${projectId}/branches/fork`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateBranch: (branchId: string, input: { name?: string; status?: Branch['status'] }) =>
+    request<Branch>(`/branches/${branchId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
 
   getGraph: (projectId: string) => request<ProjectGraph>(`/projects/${projectId}/graph`),
   createBlock: (projectId: string, input: CreateBlockInput) =>
@@ -176,7 +218,16 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(position),
     }),
-  forkBlock: (blockId: string, input: { title?: string | null; position_x: number; position_y: number }) =>
+  forkBlock: (
+    blockId: string,
+    input: {
+      branch_id?: string | null
+      title?: string | null
+      position_x: number
+      position_y: number
+      revision_id?: string | null
+    },
+  ) =>
     request<BlockDetail>(`/blocks/${blockId}/fork`, {
       method: 'POST',
       body: JSON.stringify(input),
@@ -258,6 +309,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  reindexMemory: (projectId: string, modelProfileId: string) =>
+    request<MemoryReindexResult>(`/projects/${projectId}/memory/reindex`, {
+      method: 'POST',
+      body: JSON.stringify({ model_profile_id: modelProfileId }),
+    }),
   createMemoryChunkFromBlock: (blockId: string, input: MemoryChunkFromBlockInput) =>
     request<MemoryChunk>(`/blocks/${blockId}/memory`, {
       method: 'POST',
@@ -294,6 +350,22 @@ export const api = {
   selectRevision: (blockId: string, revisionId: string) =>
     request<Block>(`/blocks/${blockId}/revisions/${revisionId}/select`, {
       method: 'POST',
+    }),
+  listSummaries: (projectId: string) => request<SummarySnapshot[]>(`/projects/${projectId}/summaries`),
+  generateBlockSummary: (blockId: string, input: GenerateSummaryInput) =>
+    request<SummarySnapshot>(`/blocks/${blockId}/summarize`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  generateBranchSummary: (branchId: string, input: GenerateSummaryInput) =>
+    request<SummarySnapshot>(`/branches/${branchId}/summarize`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  refreshSummary: (summaryId: string, input: GenerateSummaryInput) =>
+    request<SummarySnapshot>(`/summaries/${summaryId}/refresh`, {
+      method: 'POST',
+      body: JSON.stringify(input),
     }),
 
   listModelProfiles: (projectId: string) => request<ModelProfile[]>(`/projects/${projectId}/model-profiles`),
@@ -336,6 +408,11 @@ export const api = {
     request<GenerateOnceResult>('/generate/once', {
       method: 'POST',
       body: JSON.stringify(input),
+    }),
+  generateCandidates: (input: GenerateOnceInput & { count?: number }) =>
+    request<GenerateCandidatesResult>('/generate/candidates', {
+      method: 'POST',
+      body: JSON.stringify({ ...input, count: input.count ?? 2 }),
     }),
   previewGenerationContext: (input: GenerateOnceInput) =>
     request<ContextPreview>('/generate/context-preview', {

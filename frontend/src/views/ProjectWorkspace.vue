@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   ArrowLeft,
@@ -11,8 +11,8 @@ import {
   Layers3,
   Link2,
   MapPin,
-  Maximize2,
-  Minimize2,
+  Move,
+  ExternalLink,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightOpen,
@@ -45,10 +45,15 @@ const edgeLabel = ref('')
 const selectedEdgeId = ref<string | null>(null)
 const selectedEdgeType = ref<GraphEdge['edge_type']>('next')
 const selectedEdgeLabel = ref('')
+const selectedSummaryModelProfileId = ref('')
+const branchSummaryError = ref('')
 const isLeftDrawerOpen = ref(true)
 const isToolWindowOpen = ref(true)
-const isToolWindowCollapsed = ref(false)
 const activeWorkspacePanel = ref<'sidebar' | 'editor' | 'llm'>('editor')
+const canvasRef = ref<HTMLElement | null>(null)
+const toolWindowRef = ref<HTMLElement | null>(null)
+const toolWindowPosition = ref<{ x: number; y: number } | null>(null)
+let toolDrag: { pointerId: number; offsetX: number; offsetY: number } | null = null
 const openLeftSections = ref({
   branches: true,
   createBlock: true,
@@ -80,15 +85,52 @@ const graphQuery = useQuery({
   queryFn: () => api.getGraph(projectId.value),
 })
 
+const summariesQuery = useQuery({
+  queryKey: computed(() => ['summaries', projectId.value]),
+  queryFn: () => api.listSummaries(projectId.value),
+})
+
+const modelProfilesQuery = useQuery({
+  queryKey: computed(() => ['model-profiles', projectId.value]),
+  queryFn: () => api.listModelProfiles(projectId.value),
+})
+
 const branches = computed(() => branchesQuery.data.value ?? [])
+const branchPalette = ['#2f7d76', '#9b6b28', '#7a4fa3', '#466987', '#b64f6b', '#607449']
+const branchColors = computed(() => Object.fromEntries(
+  branches.value.map((branch, index) => [branch.id, branchPalette[index % branchPalette.length]]),
+))
 const graph = computed(() => graphQuery.data.value ?? { nodes: [], edges: [] })
 const blocks = computed(() => graph.value.nodes)
+const selectedBranchSummary = computed(() =>
+  (summariesQuery.data.value ?? []).find(
+    (summary) => summary.target_type === 'branch' && summary.target_id === selectedBranchId.value,
+  ) ?? null,
+)
+
+function branchSummaryStatus(branchId: string) {
+  const summary = (summariesQuery.data.value ?? []).find(
+    (item) => item.target_type === 'branch' && item.target_id === branchId,
+  )
+  if (!summary) return '无摘要'
+  return summary.status === 'valid' ? '摘要有效' : summary.status === 'stale' ? '摘要过期' : '摘要失败'
+}
 
 watch(
   branches,
   (value) => {
     if (!selectedBranchId.value && value[0]) {
       selectedBranchId.value = value[0].id
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => (modelProfilesQuery.data.value ?? []).filter((profile) => profile.profile_type === 'llm'),
+  (profiles) => {
+    if (!profiles.some((profile) => profile.id === selectedSummaryModelProfileId.value)) {
+      selectedSummaryModelProfileId.value = profiles.find((profile) => profile.has_api_key)?.id ?? profiles[0]?.id ?? ''
     }
   },
   { immediate: true },
@@ -152,6 +194,60 @@ const deleteBlock = useMutation({
   },
 })
 
+const archiveBranch = useMutation({
+  mutationFn: (branchId: string) => api.updateBranch(branchId, { status: 'archived' }),
+  onSuccess: async () => {
+    selectedBranchId.value = branches.value.find((branch) => branch.status === 'active')?.id ?? null
+    await queryClient.invalidateQueries({ queryKey: ['branches', projectId.value] })
+  },
+})
+
+async function forkBlockToNewBranch(blockId: string) {
+  const source = graph.value.nodes.find((block) => block.id === blockId)
+  if (!source?.current_revision_id) return
+  const name = window.prompt('新分支名称', `${source.title || '未命名片段'} 分支`)
+  if (!name?.trim()) return
+  const newBranch = await api.forkBranch(projectId.value, {
+    name: name.trim(),
+    base_branch_id: source.branch_id,
+    fork_from_block_id: source.id,
+    fork_from_revision_id: source.current_revision_id,
+  })
+  const forked = await api.forkBlock(source.id, {
+    branch_id: newBranch.id,
+    revision_id: source.current_revision_id,
+    title: source.title,
+    position_x: source.position_x + 260,
+    position_y: source.position_y + 120,
+  })
+  selectedBranchId.value = newBranch.id
+  workspace.selectBlock(forked.block.id)
+  await refreshWorkspace()
+}
+
+const generateBranchSummary = useMutation({
+  mutationFn: () => {
+    if (!selectedBranchId.value || !selectedSummaryModelProfileId.value) {
+      throw new Error('请选择分支和可用模型')
+    }
+    const input = {
+      project_id: projectId.value,
+      model_profile_id: selectedSummaryModelProfileId.value,
+    }
+    return selectedBranchSummary.value
+      ? api.refreshSummary(selectedBranchSummary.value.id, input)
+      : api.generateBranchSummary(selectedBranchId.value, input)
+  },
+  onSuccess: async () => {
+    branchSummaryError.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['summaries', projectId.value] })
+  },
+  onError: (error) => {
+    branchSummaryError.value = error instanceof Error ? error.message : '分支摘要生成失败'
+    void queryClient.invalidateQueries({ queryKey: ['summaries', projectId.value] })
+  },
+})
+
 watch(
   () => graph.value.nodes,
   (nodes) => {
@@ -203,6 +299,56 @@ function selectEdge(edgeId: string | null) {
 function toggleLeftSection(section: keyof typeof openLeftSections.value) {
   openLeftSections.value[section] = !openLeftSections.value[section]
 }
+
+function startToolDrag(event: PointerEvent) {
+  if (event.button !== 0 || !canvasRef.value || !toolWindowRef.value) return
+  const canvasRect = canvasRef.value.getBoundingClientRect()
+  const windowRect = toolWindowRef.value.getBoundingClientRect()
+  toolWindowPosition.value = {
+    x: windowRect.left - canvasRect.left,
+    y: windowRect.top - canvasRect.top,
+  }
+  toolDrag = {
+    pointerId: event.pointerId,
+    offsetX: event.clientX - windowRect.left,
+    offsetY: event.clientY - windowRect.top,
+  }
+  window.addEventListener('pointermove', moveToolWindow)
+  window.addEventListener('pointerup', stopToolDrag)
+  event.preventDefault()
+}
+
+function moveToolWindow(event: PointerEvent) {
+  if (!toolDrag || event.pointerId !== toolDrag.pointerId || !canvasRef.value || !toolWindowRef.value) return
+  const canvasRect = canvasRef.value.getBoundingClientRect()
+  const maxX = Math.max(0, canvasRect.width - toolWindowRef.value.offsetWidth)
+  const maxY = Math.max(0, canvasRect.height - toolWindowRef.value.offsetHeight)
+  toolWindowPosition.value = {
+    x: Math.min(maxX, Math.max(0, event.clientX - canvasRect.left - toolDrag.offsetX)),
+    y: Math.min(maxY, Math.max(0, event.clientY - canvasRect.top - toolDrag.offsetY)),
+  }
+}
+
+function stopToolDrag(event: PointerEvent) {
+  if (!toolDrag || event.pointerId !== toolDrag.pointerId) return
+  toolDrag = null
+  window.removeEventListener('pointermove', moveToolWindow)
+  window.removeEventListener('pointerup', stopToolDrag)
+}
+
+function openBlockToolInNewTab() {
+  if (!selectedBlock.value) return
+  const target = router.resolve({
+    name: 'block-tool',
+    params: { projectId: projectId.value, blockId: selectedBlock.value.id },
+  })
+  window.open(target.href, '_blank', 'noopener,noreferrer')
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', moveToolWindow)
+  window.removeEventListener('pointerup', stopToolDrag)
+})
 
 function blockLabel(blockId: string) {
   const index = graph.value.nodes.findIndex((node) => node.id === blockId)
@@ -294,9 +440,40 @@ async function refreshWorkspace() {
               type="button"
               @click="selectedBranchId = branch.id"
             >
+              <i class="branch-color-dot" :style="{ background: branchColors[branch.id] }"></i>
               <span>{{ branch.name }}</span>
-              <small>{{ branch.status }}</small>
+              <small>{{ branch.status }} · {{ branchSummaryStatus(branch.id) }}</small>
             </button>
+            <button
+              v-if="selectedBranchId && branches.find((branch) => branch.id === selectedBranchId)?.status === 'active'"
+              class="button"
+              type="button"
+              :disabled="archiveBranch.isPending.value"
+              @click="archiveBranch.mutate(selectedBranchId)"
+            >
+              归档当前分支
+            </button>
+            <div v-if="selectedBranchId" class="branch-summary-actions">
+              <div v-if="selectedBranchSummary?.status === 'stale'" class="llm-message llm-message--warning">
+                分支正文已变化，摘要需要刷新。
+              </div>
+              <div v-if="branchSummaryError" class="llm-message llm-message--error">{{ branchSummaryError }}</div>
+              <select v-model="selectedSummaryModelProfileId">
+                <option value="" disabled>选择摘要模型</option>
+                <option v-for="profile in (modelProfilesQuery.data.value ?? []).filter((item) => item.profile_type === 'llm')" :key="profile.id" :value="profile.id">
+                  {{ profile.name }} · {{ profile.model }}
+                </option>
+              </select>
+              <button
+                class="button button--primary"
+                type="button"
+                :disabled="!selectedSummaryModelProfileId || generateBranchSummary.isPending.value"
+                @click="generateBranchSummary.mutate()"
+              >
+                <RefreshCw :size="15" aria-hidden="true" />
+                {{ generateBranchSummary.isPending.value ? '生成中' : selectedBranchSummary ? '刷新分支摘要' : '生成分支摘要' }}
+              </button>
+            </div>
           </div>
         </section>
 
@@ -429,38 +606,45 @@ async function refreshWorkspace() {
       </div>
     </aside>
 
-    <section class="workspace__canvas">
+    <section ref="canvasRef" class="workspace__canvas">
       <BlockGraph
         :project-id="projectId"
         :graph="graph"
+        :branch-colors="branchColors"
         :selected-block-id="workspace.selectedBlockId"
         :selected-edge-id="selectedEdgeId"
         @select-block="workspace.selectBlock"
         @select-edge="selectEdge"
+        @fork-block="forkBlockToNewBranch"
       />
       <section
         v-if="isToolWindowOpen"
+        ref="toolWindowRef"
         class="workspace-tool-window"
-        :class="{ 'is-collapsed': isToolWindowCollapsed }"
+        :style="toolWindowPosition ? { left: `${toolWindowPosition.x}px`, top: `${toolWindowPosition.y}px`, right: 'auto', bottom: 'auto' } : undefined"
       >
-        <div class="workspace-tool-window__bar">
-          <strong>Block 工具</strong>
+        <div class="workspace-tool-window__bar" @pointerdown="startToolDrag">
+          <strong>
+            <Move :size="15" aria-hidden="true" />
+            Block 工具
+          </strong>
           <div class="workspace-tool-window__actions">
             <button
               class="icon-button"
               type="button"
-              :title="isToolWindowCollapsed ? '展开工具窗口' : '折叠工具窗口'"
-              @click="isToolWindowCollapsed = !isToolWindowCollapsed"
+              title="在新标签页打开"
+              :disabled="!selectedBlock"
+              @pointerdown.stop
+              @click="openBlockToolInNewTab"
             >
-              <Maximize2 v-if="isToolWindowCollapsed" :size="16" aria-hidden="true" />
-              <Minimize2 v-else :size="16" aria-hidden="true" />
+              <ExternalLink :size="16" aria-hidden="true" />
             </button>
-            <button class="icon-button" type="button" title="关闭工具窗口" @click="isToolWindowOpen = false">
+            <button class="icon-button" type="button" title="收起工具窗口" @pointerdown.stop @click="isToolWindowOpen = false">
               <X :size="17" aria-hidden="true" />
             </button>
           </div>
         </div>
-        <div v-show="!isToolWindowCollapsed" class="workspace-tabs">
+        <div class="workspace-tabs">
           <button
             class="workspace-tabs__item"
             :class="{ 'is-active': activeWorkspacePanel === 'sidebar' }"
@@ -486,7 +670,7 @@ async function refreshWorkspace() {
             LLM 操作
           </button>
         </div>
-        <div v-show="!isToolWindowCollapsed" class="workspace-tool-window__body">
+        <div class="workspace-tool-window__body">
           <BlockInspector
             v-if="selectedBlock"
             :project-id="projectId"

@@ -64,6 +64,14 @@ func (r *Repository) Create(ctx context.Context, projectID string, req CreateMod
 	if err != nil {
 		return ModelProfile{}, err
 	}
+	if req.ProfileType == "embedding" {
+		req.EmbeddingProfileID = nil
+	}
+	if req.EmbeddingProfileID != nil {
+		if err := r.validateEmbeddingProfile(ctx, projectID, *req.EmbeddingProfileID); err != nil {
+			return ModelProfile{}, err
+		}
+	}
 
 	profile, err := scanModelProfile(r.db.QueryRow(ctx, insertModelProfileSQL,
 		projectID,
@@ -76,6 +84,9 @@ func (r *Repository) Create(ctx context.Context, projectID string, req CreateMod
 		topP,
 		maxTokens,
 		contextWindow,
+		req.ProfileType,
+		nullableString(req.EmbeddingProfileID),
+		nullableInt(req.EmbeddingDimensions),
 		req.Metadata,
 	))
 	if err != nil {
@@ -147,11 +158,43 @@ func (r *Repository) Update(ctx context.Context, profileID string, req UpdateMod
 		args = append(args, *req.ContextWindow)
 		setClauses = append(setClauses, fmt.Sprintf("context_window = $%d", len(args)))
 	}
+	if req.ProfileType != nil {
+		profileType := normalizeProfileType(*req.ProfileType)
+		if profileType != "llm" && profileType != "embedding" {
+			return ModelProfile{}, ErrInvalidModelProfile
+		}
+		args = append(args, profileType)
+		setClauses = append(setClauses, fmt.Sprintf("profile_type = $%d", len(args)))
+		if profileType == "embedding" {
+			setClauses = append(setClauses, "embedding_profile_id = NULL")
+		}
+	}
+	if req.EmbeddingProfileID != nil {
+		var projectID string
+		if err := r.db.QueryRow(ctx, `SELECT project_id::text FROM model_profiles WHERE id = $1`, profileID).Scan(&projectID); err != nil {
+			return ModelProfile{}, normalizeNotFound(err)
+		}
+		embeddingProfileID := strings.TrimSpace(*req.EmbeddingProfileID)
+		if err := r.validateEmbeddingProfile(ctx, projectID, embeddingProfileID); err != nil {
+			return ModelProfile{}, err
+		}
+		args = append(args, embeddingProfileID)
+		setClauses = append(setClauses, fmt.Sprintf("embedding_profile_id = $%d", len(args)))
+	} else if req.ClearEmbeddingProfile != nil && *req.ClearEmbeddingProfile {
+		setClauses = append(setClauses, "embedding_profile_id = NULL")
+	}
+	if req.EmbeddingDimensions != nil {
+		if *req.EmbeddingDimensions <= 0 {
+			return ModelProfile{}, ErrInvalidModelProfile
+		}
+		args = append(args, *req.EmbeddingDimensions)
+		setClauses = append(setClauses, fmt.Sprintf("embedding_dimensions = $%d", len(args)))
+	}
 	if len(req.Metadata) > 0 {
 		if !json.Valid(req.Metadata) {
 			return ModelProfile{}, fmt.Errorf("%w: metadata must be valid JSON", ErrInvalidModelProfile)
 		}
-		args = append(args, req.Metadata)
+		args = append(args, removeLegacyEmbeddingMetadata(req.Metadata))
 		setClauses = append(setClauses, fmt.Sprintf("metadata = $%d", len(args)))
 	}
 
@@ -192,6 +235,9 @@ const selectModelProfileSQL = `
 		top_p,
 		max_tokens,
 		context_window,
+		profile_type,
+		embedding_profile_id::text,
+		embedding_dimensions,
 		metadata,
 		created_at,
 		updated_at
@@ -210,9 +256,12 @@ const insertModelProfileSQL = `
 		top_p,
 		max_tokens,
 		context_window,
+		profile_type,
+		embedding_profile_id,
+		embedding_dimensions,
 		metadata
 	)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	RETURNING
 		id::text,
 		project_id::text,
@@ -225,6 +274,9 @@ const insertModelProfileSQL = `
 		top_p,
 		max_tokens,
 		context_window,
+		profile_type,
+		embedding_profile_id::text,
+		embedding_dimensions,
 		metadata,
 		created_at,
 		updated_at
@@ -246,6 +298,9 @@ const updateModelProfileSQL = `
 		top_p,
 		max_tokens,
 		context_window,
+		profile_type,
+		embedding_profile_id::text,
+		embedding_dimensions,
 		metadata,
 		created_at,
 		updated_at
@@ -259,6 +314,8 @@ func scanModelProfile(scanner scanner) (ModelProfile, error) {
 	var profile ModelProfile
 	var projectID sql.NullString
 	var baseURL sql.NullString
+	var embeddingProfileID sql.NullString
+	var embeddingDimensions sql.NullInt64
 
 	err := scanner.Scan(
 		&profile.ID,
@@ -272,6 +329,9 @@ func scanModelProfile(scanner scanner) (ModelProfile, error) {
 		&profile.TopP,
 		&profile.MaxTokens,
 		&profile.ContextWindow,
+		&profile.ProfileType,
+		&embeddingProfileID,
+		&embeddingDimensions,
 		&profile.Metadata,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
@@ -285,7 +345,33 @@ func scanModelProfile(scanner scanner) (ModelProfile, error) {
 	if baseURL.Valid {
 		profile.BaseURL = &baseURL.String
 	}
+	if embeddingProfileID.Valid {
+		profile.EmbeddingProfileID = &embeddingProfileID.String
+	}
+	if embeddingDimensions.Valid {
+		value := int(embeddingDimensions.Int64)
+		profile.EmbeddingDimensions = &value
+	}
 	return profile, nil
+}
+
+func (r *Repository) validateEmbeddingProfile(ctx context.Context, projectID string, profileID string) error {
+	if strings.TrimSpace(profileID) == "" {
+		return ErrInvalidModelProfile
+	}
+	var exists bool
+	if err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM model_profiles
+			WHERE id = $1 AND project_id = $2 AND profile_type = 'embedding'
+		)
+	`, profileID, projectID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrInvalidModelProfile
+	}
+	return nil
 }
 
 func normalizeNotFound(err error) error {
@@ -296,6 +382,13 @@ func normalizeNotFound(err error) error {
 }
 
 func nullableString(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableInt(value *int) any {
 	if value == nil {
 		return nil
 	}

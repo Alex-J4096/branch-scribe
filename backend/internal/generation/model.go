@@ -56,6 +56,15 @@ type GenerateOnceResponse struct {
 	PromptTemplateID *string        `json:"prompt_template_id"`
 }
 
+type GenerateCandidatesRequest struct {
+	GenerateOnceRequest
+	Count int `json:"count"`
+}
+
+type GenerateCandidatesResponse struct {
+	Candidates []GenerateOnceResponse `json:"candidates"`
+}
+
 type GenerateStreamEvent struct {
 	Type             string          `json:"type"`
 	Content          string          `json:"content,omitempty"`
@@ -151,6 +160,7 @@ type SummaryContext struct {
 	TargetType  string
 	SummaryText string
 	TokenCount  int
+	Status      string
 }
 
 type GenerationRunInput struct {
@@ -172,6 +182,44 @@ type CompletionResult struct {
 	Reasoning    string
 	InputTokens  int
 	OutputTokens int
+}
+
+type GenerateBlockSummaryRequest struct {
+	ProjectID      string `json:"project_id"`
+	ModelProfileID string `json:"model_profile_id"`
+}
+
+type GenerateBranchSummaryRequest = GenerateBlockSummaryRequest
+
+type SummarySnapshot struct {
+	ID                 string          `json:"id"`
+	ProjectID          string          `json:"project_id"`
+	TargetType         string          `json:"target_type"`
+	TargetID           string          `json:"target_id"`
+	SummaryText        string          `json:"summary_text"`
+	CoveredRevisionIDs []string        `json:"covered_revision_ids"`
+	TokenCount         int             `json:"token_count"`
+	Model              *string         `json:"model"`
+	Status             string          `json:"status"`
+	Metadata           json.RawMessage `json:"metadata"`
+	CreatedAt          time.Time       `json:"created_at"`
+}
+
+type BlockSummarySource struct {
+	TargetType         string
+	TargetID           string
+	Title              string
+	CoveredRevisionIDs []string
+	Content            string
+}
+
+func (req GenerateBlockSummaryRequest) normalized() (GenerateBlockSummaryRequest, error) {
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	req.ModelProfileID = strings.TrimSpace(req.ModelProfileID)
+	if req.ProjectID == "" || req.ModelProfileID == "" {
+		return req, ErrInvalidGenerationRequest
+	}
+	return req, nil
 }
 
 type TokenEvent struct {
@@ -203,6 +251,7 @@ type ContextItem struct {
 	EstimatedTokens int    `json:"estimated_tokens"`
 	Included        bool   `json:"included"`
 	Required        bool   `json:"required"`
+	Status          string `json:"status,omitempty"`
 }
 
 func (req GenerateOnceRequest) normalized() (GenerateOnceRequest, error) {

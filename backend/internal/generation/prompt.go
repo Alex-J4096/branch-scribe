@@ -74,6 +74,8 @@ func normalizeBlockContent(content string, format string) string {
 
 func defaultPromptTemplate(taskType string) string {
 	switch taskType {
+	case "compare_revisions":
+		return "请为当前片段生成一个可独立比较的候选版本。保持核心设定一致，但在情节选择、叙事角度、节奏或语言表达上形成清晰差异。只输出完整候选正文。\n\n硬设定：\n{{canon_facts}}\n\n分支摘要：\n{{branch_summary}}\n\n最近正文：\n{{recent_blocks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "free_write":
 		return "请完全根据用户指令生成正文，不要依赖当前 block 正文。必须遵守硬设定，并参考相关记忆。只输出生成后的正文。\n\n项目简介：\n{{project_description}}\n\n硬设定：\n{{canon_facts}}\n\n相关记忆：\n{{memory_chunks}}\n\n用户指令：\n{{user_instruction}}"
 	case "continue":

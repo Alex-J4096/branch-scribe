@@ -502,3 +502,93 @@
 - 浮动窗口支持折叠和关闭；关闭后可通过画布右下角的 Block 工具按钮重新打开。
 - 三个标签复用同一个 Block Inspector 实例，切换时保留正文草稿、编辑器选区和 LLM 生成状态。
 - 增加移动端尺寸约束，浮窗始终限制在画布范围内。
+
+### Step 51: Phase 5 核验与 Block Summary
+
+- 核对 Phase 5 清单和实现：Context Builder、task type、token budget、上下文来源与裁剪、预览 API、前端预览和 generation snapshot 均已落地。
+- 运行后端测试、前端类型检查和生产构建，确认 Phase 5 可验收；Vite 仍仅有既有的 bundle 体积警告。
+- 开始 Phase 6，新增 `POST /api/blocks/:blockId/summarize`，使用请求指定的模型配置为 block 当前 revision 生成摘要。
+- 摘要生成会净化 HTML 正文，并使用低温度、最多 800 token 的专用小说摘要提示词。
+- 成功结果写入 `summary_snapshots`，记录 `target_type=block`、当前 covered revision、摘要 token 数、模型、valid 状态和 provider token metadata。
+- 添加 block summary 请求规范化测试，并更新 `ARCHITECTURE.md` 中 Phase 6 的 block summary 任务。
+
+### Step 52: Phase 6 摘要生命周期与前端操作
+
+- 扩展 block summarize：普通 block 生成 block summary；chapter block 自动聚合章节自身及子 block 的 current revisions，生成 chapter summary。
+- 新增 branch summary、summary refresh 和项目摘要列表 API；生成新 snapshot 时将同目标旧 valid snapshot 标记 stale。
+- 创建 current revision 或切换 current revision 时，在同一事务中将相关 block、所属 chapter 和所属 branch 摘要标记 stale。
+- Context Builder 对每个目标只读取最新摘要，优先使用 valid snapshot；最新 snapshot 为 stale 时返回可见提示但不加入最终 prompt。
+- Block Inspector 新增摘要面板，显示 valid、stale、failed 状态、摘要正文和覆盖 revision 数，并支持手动生成或刷新。
+- 工作台分支列表显示摘要状态，支持选择模型后生成或刷新分支摘要。
+- Context Preview 展示 chapter/branch 摘要来源；过期摘要禁用勾选并明确标记“已过期”。
+- 添加 stale summary 不进入上下文预算的单元测试；运行 Go 测试、前端类型检查和生产构建均通过，Vite 仍有既有 bundle 体积警告。
+- 更新 `ARCHITECTURE.md`，完成 Phase 6 后端、前端与验收清单。
+
+### Step 53: Block 工具拖动与独立标签页
+
+- Block 工具浮窗标题栏支持 Pointer Events 拖动，并限制窗口始终位于画布可见范围内。
+- 扩大浮窗默认宽高，调整圆角、阴影、标题栏、标签栏和内容背景层级。
+- 移除功能重复的最小化按钮，仅保留单一收起按钮；收起后仍可通过画布右下角入口重新打开。
+- 浮窗新增“在新标签页打开”操作，为当前 block 生成独立工具页路由 `/projects/:projectId/blocks/:blockId/tool`。
+- 独立工具页保留详情、正文、LLM 操作三个标签，并提供返回项目工作台入口。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍有既有 bundle 体积警告。
+
+### Step 54: 修复分支摘要 404 与错误响应解析
+
+- 定位分支摘要失败原因为 8080 仍运行未注册 Phase 6 摘要路由的旧后端进程；重启最新后端后摘要列表与分支摘要路由生效。
+- 前端 API client 不再无条件调用 `response.json()`，改为先读取响应文本并安全解析 envelope。
+- 后端返回纯文本或空响应时，前端现在显示真实 HTTP 错误内容，不再抛出 `Unexpected non-whitespace character after JSON`。
+- 使用项目配置的 DeepSeek V4 Flash 完成真实端到端验证：分支摘要返回 201、写入 8 个 covered revisions，并可通过项目摘要列表 API 查询。
+- `contentscript.js` 的 EventEmitter / ObjectMultiplex 警告确认来自浏览器扩展内容脚本，与 BranchScribe 前后端无关。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍有既有 bundle 体积警告。
+
+### Step 55: Phase 6 摘要状态完整性加固
+
+- 摘要列表与 Context Builder 加载摘要前，会根据 `covered_revision_ids` 和目标当前 revisions 主动校验状态。
+- 主动校验覆盖 block、chapter 和 branch，revision 集合不一致时将 valid snapshot 持久化标记为 stale，补足仅依赖 revision 写入钩子的缺口。
+- provider 调用失败或返回空摘要时写入 failed snapshot，记录模型、覆盖 revisions 和错误 metadata，并将同目标旧 valid snapshot 标记 stale。
+- Block Inspector 和分支摘要操作在生成失败后主动刷新摘要查询，使 failed 状态和刷新入口立即可见。
+- 在真实数据库调用项目摘要列表，确认主动 stale 检测 SQL 执行成功且当前分支摘要保持 valid。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍有既有 bundle 体积警告。
+
+### Step 56: 补完 Phase 4 Embedding 与语义检索
+
+- 新增 OpenAI-compatible embedding provider，通过模型 Profile 的 Base URL/API key 调用 `/embeddings`，支持批量输入和可选 dimensions。
+- 模型配置页新增 Embedding model 与 dimensions 字段，存入 Profile metadata，不影响现有生成模型参数。
+- 新增项目级 Memory reindex：按批次为全部 memory chunks 和非 deprecated canon entities 生成向量并写入 pgvector。
+- Memory search 支持 keyword 与 semantic 两种模式；semantic 模式生成查询向量，使用 cosine distance 排序并返回 similarity。
+- Memory 页面新增 embedding Profile 选择、Memory + Canon reindex、显式语义搜索和相似度展示。
+- Memory 正文或 Canon 可嵌入字段发生修改时清空旧 embedding，避免继续使用失效向量。
+- 使用现有 SiliconFlow Profile 配置 `Qwen/Qwen3-Embedding-0.6B`（1024 维）完成真实验证：成功索引 5 条 Memory 和 1 条 Canon，语义查询返回按相似度排序的结果。
+- 添加 embedding provider 和 vector literal 单元测试；运行 `go test ./...`、`npm run typecheck`、`npm run build`，均通过；Vite 仍有既有 bundle 体积警告。
+- 更新 `ARCHITECTURE.md`，完成 Phase 4 的 embedding provider、memory semantic search 和手动 reindex 清单。
+
+### Step 57: LLM 与 Embedding Profile 解耦
+
+- `model_profiles` 新增 `profile_type`、`embedding_profile_id` 和 `embedding_dimensions`，同一项目可分别维护 LLM 与 Embedding Profile。
+- Embedding Profile 拥有独立 provider、Base URL、API key、model 和 dimensions，不再复用主 LLM 的 provider 配置。
+- LLM Profile 可选择关联一个 Embedding Profile；后端接受 LLM Profile ID 时会自动解析其关联的 embedding 配置。
+- 启动兼容迁移会将旧 Profile metadata 中的 embedding 配置复制为独立 Embedding Profile、回填关联，并清理旧 metadata 字段。
+- 模型配置页面按 LLM Profiles 与 Embedding Profiles 分类展示，提供分别新建和编辑的表单；Embedding Profile 不再出现在正文生成模型选择中。
+- Memory 页面只列出 Embedding Profile 供 reindex 和 semantic search 使用。
+- 真实迁移生成独立 `Qwen/Qwen3-Embedding-0.6B` Profile，并关联到 DeepSeek V4 Flash；直接使用 Embedding Profile 或关联的 LLM Profile 进行语义检索均返回 200。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍有既有 bundle 体积警告。
+
+### Step 58: 允许过期摘要作为可选上下文
+
+- Context Builder 不再强制排除 stale summary，保留原摘要正文并与 valid summary 一样参与 token budget。
+- stale summary 默认可进入最终 prompt；用户仍可在 Context Preview 中临时取消。
+- Context Preview 保留“摘要已过期”提示，但恢复 checkbox 操作，不再禁用选择。
+- Block 摘要状态文案调整为：过期摘要仍可作为前文参考，也可选择刷新。
+- 更新单元测试，验证 stale summary 可以被上下文预算纳入。
+
+### Step 59: Phase 7 分支写作增强
+
+- 新增 `GET /api/branches/:branchId/path`，按 base branch 与 fork block 还原当前分支的祖先正文路径。
+- 分支 fork 会校验项目、起点 block 和 revision 的归属，并支持从任意历史 revision 建立分支起点。
+- 新增 `compare_revisions` 生成模板与 `POST /api/generate/candidates`，固定生成两个具有实质差异的候选版本。
+- 候选比较界面支持并排阅读、保存为两个非当前 revision、选择一个设为当前版本，以及展开为独立 Block 或 Branch。
+- 画布按 branch 显示颜色；fork edge 保留独立颜色与动画；右键 block 可创建新 branch 并生成 fork block。
+- 分支列表支持切换当前 branch 和归档不用的 branch。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍有既有 bundle 体积警告。
+- 更新 Branch / Generation API 文档并完成 Phase 7 清单。

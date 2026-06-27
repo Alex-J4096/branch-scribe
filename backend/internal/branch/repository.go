@@ -39,6 +39,73 @@ func (r *Repository) List(ctx context.Context, projectID string) ([]Branch, erro
 	return branches, rows.Err()
 }
 
+func (r *Repository) Path(ctx context.Context, branchID string) (BranchPath, error) {
+	selected, err := r.Get(ctx, branchID)
+	if err != nil {
+		return BranchPath{}, err
+	}
+	chain := make([]Branch, 0, 4)
+	seen := map[string]struct{}{}
+	current := selected
+	for {
+		if _, exists := seen[current.ID]; exists {
+			return BranchPath{}, fmt.Errorf("%w: branch ancestry contains a cycle", ErrInvalidBranch)
+		}
+		seen[current.ID] = struct{}{}
+		chain = append(chain, current)
+		if current.BaseBranchID == nil {
+			break
+		}
+		current, err = r.Get(ctx, *current.BaseBranchID)
+		if err != nil {
+			return BranchPath{}, err
+		}
+	}
+
+	blocks := make([]PathBlock, 0)
+	for index := len(chain) - 1; index >= 0; index-- {
+		item := chain[index]
+		var cutoffBlockID *string
+		if index > 0 {
+			cutoffBlockID = chain[index-1].ForkFromBlockID
+		}
+		rows, queryErr := r.db.Query(ctx, `
+			SELECT id::text, branch_id::text, title, type, current_revision_id::text, order_index, metadata
+			FROM blocks
+			WHERE branch_id = $1
+			  AND ($2::uuid IS NULL OR order_index <= (SELECT order_index FROM blocks WHERE id = $2))
+			ORDER BY order_index ASC, created_at ASC
+		`, item.ID, nullableString(cutoffBlockID))
+		if queryErr != nil {
+			return BranchPath{}, queryErr
+		}
+		for rows.Next() {
+			var block PathBlock
+			var rowBranchID, title, revisionID sql.NullString
+			if scanErr := rows.Scan(&block.ID, &rowBranchID, &title, &block.Type, &revisionID, &block.OrderIndex, &block.Metadata); scanErr != nil {
+				rows.Close()
+				return BranchPath{}, scanErr
+			}
+			if rowBranchID.Valid {
+				block.BranchID = &rowBranchID.String
+			}
+			if title.Valid {
+				block.Title = &title.String
+			}
+			if revisionID.Valid {
+				block.CurrentRevisionID = &revisionID.String
+			}
+			blocks = append(blocks, block)
+		}
+		if rowsErr := rows.Err(); rowsErr != nil {
+			rows.Close()
+			return BranchPath{}, rowsErr
+		}
+		rows.Close()
+	}
+	return BranchPath{Branch: selected, Blocks: blocks}, nil
+}
+
 func (r *Repository) Create(ctx context.Context, projectID string, req CreateBranchRequest) (Branch, error) {
 	name, err := normalizeName(req.Name)
 	if err != nil {
@@ -52,6 +119,36 @@ func (r *Repository) Fork(ctx context.Context, projectID string, req ForkBranchR
 	name, err := normalizeName(req.Name)
 	if err != nil {
 		return Branch{}, err
+	}
+	if req.ForkFromBlockID == nil {
+		return Branch{}, fmt.Errorf("%w: fork_from_block_id is required", ErrInvalidBranch)
+	}
+	var sourceProjectID string
+	var sourceBranchID, currentRevisionID sql.NullString
+	err = r.db.QueryRow(ctx, `
+		SELECT project_id::text, branch_id::text, current_revision_id::text FROM blocks WHERE id = $1
+	`, *req.ForkFromBlockID).Scan(&sourceProjectID, &sourceBranchID, &currentRevisionID)
+	if err != nil {
+		return Branch{}, normalizeNotFound(err)
+	}
+	if sourceProjectID != projectID {
+		return Branch{}, fmt.Errorf("%w: fork block does not belong to project", ErrInvalidBranch)
+	}
+	if req.BaseBranchID == nil && sourceBranchID.Valid {
+		req.BaseBranchID = &sourceBranchID.String
+	}
+	if req.ForkFromRevisionID == nil && currentRevisionID.Valid {
+		req.ForkFromRevisionID = &currentRevisionID.String
+	}
+	if req.ForkFromRevisionID == nil {
+		return Branch{}, fmt.Errorf("%w: fork revision is required", ErrInvalidBranch)
+	}
+	var revisionBlockID string
+	if err = r.db.QueryRow(ctx, `SELECT block_id::text FROM block_revisions WHERE id = $1`, *req.ForkFromRevisionID).Scan(&revisionBlockID); err != nil {
+		return Branch{}, normalizeNotFound(err)
+	}
+	if revisionBlockID != *req.ForkFromBlockID {
+		return Branch{}, fmt.Errorf("%w: revision does not belong to fork block", ErrInvalidBranch)
 	}
 
 	return scanBranch(r.db.QueryRow(

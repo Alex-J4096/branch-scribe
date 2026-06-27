@@ -36,7 +36,7 @@ func (r *Repository) getModelProfile(ctx context.Context, projectID string, prof
 	err := r.db.QueryRow(ctx, `
 		SELECT id::text, provider, model, base_url, api_key_ref, temperature, top_p, max_tokens, context_window
 		FROM model_profiles
-		WHERE id = $1 AND project_id = $2
+		WHERE id = $1 AND project_id = $2 AND profile_type = 'llm'
 	`, profileID, projectID).Scan(
 		&profile.ID,
 		&profile.Provider,
@@ -349,6 +349,9 @@ func (r *Repository) ListMemoryForContext(ctx context.Context, projectID string,
 }
 
 func (r *Repository) ListSummariesForContext(ctx context.Context, projectID string, blockID string, branchID *string) ([]SummaryContext, error) {
+	if err := r.RefreshStaleSummaryStatuses(ctx, projectID); err != nil {
+		return nil, err
+	}
 	args := []any{projectID, blockID}
 	clauses := []string{`
 		(target_type = 'chapter' AND target_id IN (
@@ -369,12 +372,23 @@ func (r *Repository) ListSummariesForContext(ctx context.Context, projectID stri
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id::text, target_type, summary_text, token_count
-		FROM summary_snapshots
-		WHERE project_id = $1
-			AND status = 'valid'
-			AND (%s)
-		ORDER BY created_at DESC
+		SELECT id::text, target_type, summary_text, token_count, status
+		FROM (
+			SELECT DISTINCT ON (target_type, target_id)
+				id,
+				target_type,
+				target_id,
+				summary_text,
+				token_count,
+				status,
+				created_at
+			FROM summary_snapshots
+			WHERE project_id = $1
+				AND status IN ('valid', 'stale')
+				AND (%s)
+			ORDER BY target_type, target_id, created_at DESC
+		) latest
+		ORDER BY status = 'valid' DESC, created_at DESC
 		LIMIT 4
 	`, strings.Join(clauses, " OR "))
 	rows, err := r.db.Query(ctx, query, args...)
@@ -386,12 +400,299 @@ func (r *Repository) ListSummariesForContext(ctx context.Context, projectID stri
 	summaries := make([]SummaryContext, 0)
 	for rows.Next() {
 		var summary SummaryContext
-		if err := rows.Scan(&summary.ID, &summary.TargetType, &summary.SummaryText, &summary.TokenCount); err != nil {
+		if err := rows.Scan(&summary.ID, &summary.TargetType, &summary.SummaryText, &summary.TokenCount, &summary.Status); err != nil {
 			return nil, err
 		}
 		summaries = append(summaries, summary)
 	}
 	return summaries, rows.Err()
+}
+
+func (r *Repository) GetBlockSummarySource(ctx context.Context, projectID string, blockID string) (BlockSummarySource, error) {
+	var source BlockSummarySource
+	var title sql.NullString
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			CASE WHEN b.type = 'chapter' THEN 'chapter' ELSE 'block' END,
+			b.id::text,
+			b.title
+		FROM blocks b
+		WHERE b.id = $1 AND b.project_id = $2
+	`, blockID, projectID).Scan(
+		&source.TargetType,
+		&source.TargetID,
+		&title,
+	)
+	if err != nil {
+		return BlockSummarySource{}, normalizeNotFound(err)
+	}
+	if title.Valid {
+		source.Title = title.String
+	}
+
+	scopeClause := "b.id = $2"
+	if source.TargetType == "chapter" {
+		scopeClause = "(b.id = $2 OR b.parent_block_id = $2)"
+	}
+	rows, err := r.db.Query(ctx, fmt.Sprintf(`
+		SELECT b.title, br.id::text, br.content, br.content_format
+		FROM blocks b
+		JOIN block_revisions br ON br.id = b.current_revision_id
+		WHERE b.project_id = $1 AND %s
+		ORDER BY b.order_index, b.created_at
+	`, scopeClause), projectID, blockID)
+	if err != nil {
+		return BlockSummarySource{}, err
+	}
+	defer rows.Close()
+	var sections []string
+	for rows.Next() {
+		var blockTitle sql.NullString
+		var revisionID, content, contentFormat string
+		if err := rows.Scan(&blockTitle, &revisionID, &content, &contentFormat); err != nil {
+			return BlockSummarySource{}, err
+		}
+		source.CoveredRevisionIDs = append(source.CoveredRevisionIDs, revisionID)
+		sections = append(sections, "## "+fallbackTitle(nullableText(blockTitle), "未命名片段")+"\n"+normalizeBlockContent(content, contentFormat))
+	}
+	if err := rows.Err(); err != nil {
+		return BlockSummarySource{}, err
+	}
+	source.Content = strings.Join(sections, "\n\n")
+	return source, nil
+}
+
+func (r *Repository) GetBranchSummarySource(ctx context.Context, projectID string, branchID string) (BlockSummarySource, error) {
+	source := BlockSummarySource{TargetType: "branch", TargetID: branchID}
+	if err := r.db.QueryRow(ctx, `
+		SELECT name FROM branches WHERE id = $1 AND project_id = $2
+	`, branchID, projectID).Scan(&source.Title); err != nil {
+		return BlockSummarySource{}, normalizeNotFound(err)
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT b.title, br.id::text, br.content, br.content_format
+		FROM blocks b
+		JOIN block_revisions br ON br.id = b.current_revision_id
+		WHERE b.project_id = $1 AND b.branch_id = $2
+		ORDER BY b.order_index, b.created_at
+	`, projectID, branchID)
+	if err != nil {
+		return BlockSummarySource{}, err
+	}
+	defer rows.Close()
+	var sections []string
+	for rows.Next() {
+		var title sql.NullString
+		var revisionID, content, contentFormat string
+		if err := rows.Scan(&title, &revisionID, &content, &contentFormat); err != nil {
+			return BlockSummarySource{}, err
+		}
+		source.CoveredRevisionIDs = append(source.CoveredRevisionIDs, revisionID)
+		sections = append(sections, "## "+fallbackTitle(nullableText(title), "未命名片段")+"\n"+normalizeBlockContent(content, contentFormat))
+	}
+	if err := rows.Err(); err != nil {
+		return BlockSummarySource{}, err
+	}
+	source.Content = strings.Join(sections, "\n\n")
+	return source, nil
+}
+
+func (r *Repository) GetSummarySource(ctx context.Context, projectID string, summaryID string) (BlockSummarySource, error) {
+	var targetType, targetID string
+	if err := r.db.QueryRow(ctx, `
+		SELECT target_type, target_id::text
+		FROM summary_snapshots
+		WHERE id = $1 AND project_id = $2
+	`, summaryID, projectID).Scan(&targetType, &targetID); err != nil {
+		return BlockSummarySource{}, normalizeNotFound(err)
+	}
+	if targetType == "branch" {
+		return r.GetBranchSummarySource(ctx, projectID, targetID)
+	}
+	return r.GetBlockSummarySource(ctx, projectID, targetID)
+}
+
+func (r *Repository) CreateSummary(ctx context.Context, projectID string, source BlockSummarySource, result CompletionResult, model string) (SummarySnapshot, error) {
+	tokenCount := result.OutputTokens
+	if tokenCount <= 0 {
+		tokenCount = estimateTokens(result.Content)
+	}
+	metadata, err := json.Marshal(map[string]any{
+		"input_tokens":  result.InputTokens,
+		"output_tokens": result.OutputTokens,
+	})
+	if err != nil {
+		return SummarySnapshot{}, err
+	}
+	return r.createSummarySnapshot(ctx, projectID, source, result.Content, tokenCount, model, "valid", metadata)
+}
+
+func (r *Repository) CreateFailedSummary(ctx context.Context, projectID string, source BlockSummarySource, model string, failure error) (SummarySnapshot, error) {
+	metadata, err := json.Marshal(map[string]any{"error": failure.Error()})
+	if err != nil {
+		return SummarySnapshot{}, err
+	}
+	return r.createSummarySnapshot(ctx, projectID, source, "", 0, model, "failed", metadata)
+}
+
+func (r *Repository) createSummarySnapshot(
+	ctx context.Context,
+	projectID string,
+	source BlockSummarySource,
+	summaryText string,
+	tokenCount int,
+	model string,
+	status string,
+	metadata json.RawMessage,
+) (SummarySnapshot, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return SummarySnapshot{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE summary_snapshots
+		SET status = 'stale'
+		WHERE project_id = $1 AND target_type = $2 AND target_id = $3 AND status = 'valid'
+	`, projectID, source.TargetType, source.TargetID); err != nil {
+		return SummarySnapshot{}, err
+	}
+
+	var snapshot SummarySnapshot
+	err = tx.QueryRow(ctx, `
+		INSERT INTO summary_snapshots (
+			project_id,
+			target_type,
+			target_id,
+			summary_text,
+			covered_revision_ids,
+			token_count,
+			model,
+			status,
+			metadata
+		)
+		VALUES ($1, $2, $3, $4, $5::uuid[], $6, $7, $8, $9)
+		RETURNING
+			id::text,
+			project_id::text,
+			target_type,
+			target_id::text,
+			summary_text,
+			covered_revision_ids::text[],
+			token_count,
+			model,
+			status,
+			metadata,
+			created_at
+	`, projectID, source.TargetType, source.TargetID, summaryText, source.CoveredRevisionIDs, tokenCount, model, status, metadata).Scan(
+		&snapshot.ID,
+		&snapshot.ProjectID,
+		&snapshot.TargetType,
+		&snapshot.TargetID,
+		&snapshot.SummaryText,
+		&snapshot.CoveredRevisionIDs,
+		&snapshot.TokenCount,
+		&snapshot.Model,
+		&snapshot.Status,
+		&snapshot.Metadata,
+		&snapshot.CreatedAt,
+	)
+	if err != nil {
+		return SummarySnapshot{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SummarySnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (r *Repository) ListSummaries(ctx context.Context, projectID string) ([]SummarySnapshot, error) {
+	if err := r.RefreshStaleSummaryStatuses(ctx, projectID); err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT ON (target_type, target_id)
+			id::text,
+			project_id::text,
+			target_type,
+			target_id::text,
+			summary_text,
+			covered_revision_ids::text[],
+			token_count,
+			model,
+			status,
+			metadata,
+			created_at
+		FROM summary_snapshots
+		WHERE project_id = $1
+		ORDER BY target_type, target_id, created_at DESC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	summaries := make([]SummarySnapshot, 0)
+	for rows.Next() {
+		var snapshot SummarySnapshot
+		if err := rows.Scan(
+			&snapshot.ID, &snapshot.ProjectID, &snapshot.TargetType, &snapshot.TargetID,
+			&snapshot.SummaryText, &snapshot.CoveredRevisionIDs, &snapshot.TokenCount,
+			&snapshot.Model, &snapshot.Status, &snapshot.Metadata, &snapshot.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, snapshot)
+	}
+	return summaries, rows.Err()
+}
+
+func (r *Repository) RefreshStaleSummaryStatuses(ctx context.Context, projectID string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE summary_snapshots summary
+		SET status = 'stale'
+		WHERE summary.project_id = $1
+			AND summary.status = 'valid'
+			AND (
+				SELECT COALESCE(array_agg(revision_id ORDER BY revision_id), '{}'::uuid[])
+				FROM unnest(summary.covered_revision_ids) AS revision_id
+			) IS DISTINCT FROM (
+				CASE summary.target_type
+					WHEN 'block' THEN ARRAY(
+						SELECT block.current_revision_id
+						FROM blocks block
+						WHERE block.project_id = summary.project_id
+							AND block.id = summary.target_id
+							AND block.current_revision_id IS NOT NULL
+						ORDER BY block.current_revision_id
+					)
+					WHEN 'chapter' THEN ARRAY(
+						SELECT block.current_revision_id
+						FROM blocks block
+						WHERE block.project_id = summary.project_id
+							AND (block.id = summary.target_id OR block.parent_block_id = summary.target_id)
+							AND block.current_revision_id IS NOT NULL
+						ORDER BY block.current_revision_id
+					)
+					WHEN 'branch' THEN ARRAY(
+						SELECT block.current_revision_id
+						FROM blocks block
+						WHERE block.project_id = summary.project_id
+							AND block.branch_id = summary.target_id
+							AND block.current_revision_id IS NOT NULL
+						ORDER BY block.current_revision_id
+					)
+					ELSE '{}'::uuid[]
+				END
+			)
+	`, projectID)
+	return err
+}
+
+func nullableText(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	return &value.String
 }
 
 func (r *Repository) GetPromptTemplate(ctx context.Context, projectID string, templateID string) (PromptTemplate, error) {

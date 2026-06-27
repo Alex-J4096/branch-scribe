@@ -121,6 +121,7 @@ func (h *Handler) buildContext(ctx context.Context, req GenerateOnceRequest, blo
 			Title:    summaryTitle(summary.TargetType),
 			Content:  summary.SummaryText,
 			SourceID: summary.ID,
+			Status:   summary.Status,
 		})
 	}
 	for _, block := range recentBlocks {
