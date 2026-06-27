@@ -474,6 +474,31 @@ CREATE TABLE generation_runs (
 );
 ```
 
+### 6.12 llm_conversations / llm_messages
+
+LLM 辅助写作对话独立于正文 revision 和 generation run 保存。conversation 归属于 block；message 保存线性的 `user` / `assistant` 对话流，并可通过 `generation_run_id` 追溯实际模型调用。编辑历史 user message 时截断其后的消息，再从该轮继续生成。
+
+```sql
+CREATE TABLE llm_conversations (
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    block_id UUID NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE llm_messages (
+    id UUID PRIMARY KEY,
+    conversation_id UUID NOT NULL REFERENCES llm_conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    generation_run_id UUID REFERENCES generation_runs(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+```
+
 ---
 
 ## 7. 后端模块设计
@@ -581,9 +606,12 @@ CREATE TABLE generation_runs (
   "task_type": "continue",
   "selected_text": "",
   "user_instruction": "继续描写女主进入地下车站后的场景",
+  "context_node_count": 3,
   "model_profile_id": "..."
 }
 ```
+
+`context_node_count` 表示沿当前故事线的 `next` / `fork` 图边向前加载的正文节点数：`0` 不加载，正整数加载指定数量，`-1` 加载全部；未传时兼容为 `1`。其他分支和仅通过 `references` / `summarizes` 关联的节点不会混入故事前文。
 
 输出：
 
@@ -1068,6 +1096,12 @@ POST   /api/generate/stream
 POST   /api/generate/once
 POST   /api/generate/candidates
 POST   /api/generate/context-preview
+GET    /api/blocks/:blockId/llm-conversations
+POST   /api/blocks/:blockId/llm-conversations
+PATCH  /api/llm-conversations/:conversationId
+DELETE /api/llm-conversations/:conversationId
+GET    /api/llm-conversations/:conversationId/messages
+PATCH  /api/llm-messages/:messageId
 GET    /api/projects/:projectId/generation-runs
 GET    /api/generation-runs/:runId
 ```
@@ -1082,18 +1116,18 @@ Prompt Template 支持变量：
 
 ```text
 {{project_description}}
-{{style_profile}}
+{{current_block_title}}
 {{canon_facts}}
-{{character_cards}}
-{{location_cards}}
-{{recent_context}}
+{{recent_blocks}}
 {{branch_summary}}
 {{chapter_summary}}
-{{retrieved_memories}}
+{{memory_chunks}}
 {{current_block}}
 {{selected_text}}
 {{user_instruction}}
 ```
+
+每个项目创建时自动初始化自由生成、续写、改写、局部改写、扩写、缩写和润色操作。默认操作与用户新增操作都存放在 `prompt_templates`，可在 LLM Chatbox 中直接编辑名称与 Prompt、删除或新增；生成请求通过 `prompt_template_id` 固定使用当时选中的模板。
 
 ### 13.2 续写模板示例
 
@@ -1512,6 +1546,7 @@ branchscribe/
 * [x] 支持 token budget。
 * [x] 支持加载 current block。
 * [x] 支持加载 recent blocks。
+* [x] 支持每次生成选择当前故事线加入 0、指定数量或全部前文节点。
 * [x] 支持加载 branch summary。
 * [x] 支持加载 chapter summary。
 * [x] 支持加载 canon entities。
@@ -1529,16 +1564,27 @@ branchscribe/
 * [x] 展示预计 token 数。
 * [x] 展示每个上下文 item 的类型。
 * [x] 支持用户临时取消某个 context item。
+* [x] 支持用户选择当前故事线进入上下文的前文节点数量。
 * [x] 支持用户查看最终 prompt。
 * [x] 将 Block 详情、正文和 LLM 操作整合为可折叠、可关闭的画布浮动标签窗口。
+* [x] 将 LLM 操作重构为消息流与底部 Chatbox 布局。
+* [x] 将任务类型、上下文和本轮参数调整收入 Chatbox 二级工具菜单。
+* [x] 将写作操作与上下文二级菜单改为适配 Chatbox 的浮层样式。
+* [x] 支持在 Chatbox 中新增、编辑和删除写作操作及其 Prompt。
+* [x] 为每个项目初始化可编辑的默认写作操作，并在生成时使用选中的 Prompt Template。
+* [x] 支持快捷切换模型、创建/切换/删除对话。
+* [x] 支持复制消息和编辑 user 消息后从该轮继续。
 
 ### 验收标准
 
 * [x] 用户执行生成前可以看到上下文预览。
 * [x] 续写时自动包含最近正文。
+* [x] 生成时可选择不包含前文、指定数量前文或当前故事线全部前文。
 * [x] 改写时自动包含原文和设定。
 * [x] 局部修改时自动包含选中文本和前后文。
 * [x] LLM 调用记录包含 input_context_snapshot。
+* [x] 同一 block 可维护多个持久化 LLM 对话，并在生成时携带完整历史消息。
+* [x] 用户无需修改代码即可调整默认操作 Prompt 或创建自定义写作操作。
 
 ---
 

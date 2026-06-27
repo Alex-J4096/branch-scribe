@@ -182,7 +182,31 @@ export type GenerateOnceInput = {
   prompt_template_id?: string | null
   selected_text?: string
   user_instruction?: string
+  context_node_count?: number
+  conversation_id?: string | null
+  temperature?: number
+  top_p?: number
+  max_tokens?: number
   excluded_context_item_ids?: string[]
+}
+
+export type LLMConversation = {
+  id: string
+  project_id: string
+  block_id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export type LLMConversationMessage = {
+  id: string
+  conversation_id: string
+  role: 'user' | 'assistant'
+  content: string
+  generation_run_id: string | null
+  created_at: string
+  updated_at: string
 }
 
 export type ContextItem = {
@@ -237,6 +261,7 @@ export type GenerateOnceResult = {
   context_preview: ContextPreview
   model_profile_id: string
   prompt_template_id: string | null
+  conversation_id: string | null
 }
 
 export type GenerateCandidatesResult = {
@@ -254,6 +279,7 @@ export type GenerateStreamEvent = {
   context_preview?: ContextPreview
   model_profile_id?: string
   prompt_template_id?: string | null
+  conversation_id?: string | null
   error?: string
 }
 

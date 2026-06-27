@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,6 +20,195 @@ type Repository struct {
 
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
+}
+
+func (r *Repository) ListConversations(ctx context.Context, blockID string) ([]Conversation, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, project_id::text, block_id::text, title, created_at, updated_at
+		FROM llm_conversations
+		WHERE block_id = $1
+		ORDER BY updated_at DESC
+	`, blockID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]Conversation, 0)
+	for rows.Next() {
+		var item Conversation
+		if err := rows.Scan(&item.ID, &item.ProjectID, &item.BlockID, &item.Title, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) GetConversation(ctx context.Context, conversationID string) (Conversation, error) {
+	var item Conversation
+	err := r.db.QueryRow(ctx, `
+		SELECT id::text, project_id::text, block_id::text, title, created_at, updated_at
+		FROM llm_conversations WHERE id = $1
+	`, conversationID).Scan(
+		&item.ID, &item.ProjectID, &item.BlockID, &item.Title, &item.CreatedAt, &item.UpdatedAt,
+	)
+	return item, normalizeNotFound(err)
+}
+
+func (r *Repository) CreateConversation(ctx context.Context, blockID string, req CreateConversationRequest) (Conversation, error) {
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = "新对话"
+	}
+	var item Conversation
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO llm_conversations (project_id, block_id, title)
+		SELECT project_id, id, $2 FROM blocks WHERE id = $1 AND project_id = $3
+		RETURNING id::text, project_id::text, block_id::text, title, created_at, updated_at
+	`, blockID, title, req.ProjectID).Scan(
+		&item.ID, &item.ProjectID, &item.BlockID, &item.Title, &item.CreatedAt, &item.UpdatedAt,
+	)
+	return item, normalizeNotFound(err)
+}
+
+func (r *Repository) UpdateConversation(ctx context.Context, conversationID string, title string) (Conversation, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return Conversation{}, ErrInvalidGenerationRequest
+	}
+	var item Conversation
+	err := r.db.QueryRow(ctx, `
+		UPDATE llm_conversations SET title = $2, updated_at = now() WHERE id = $1
+		RETURNING id::text, project_id::text, block_id::text, title, created_at, updated_at
+	`, conversationID, title).Scan(
+		&item.ID, &item.ProjectID, &item.BlockID, &item.Title, &item.CreatedAt, &item.UpdatedAt,
+	)
+	return item, normalizeNotFound(err)
+}
+
+func (r *Repository) DeleteConversation(ctx context.Context, conversationID string) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM llm_conversations WHERE id = $1`, conversationID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrGenerationResourceNotFound
+	}
+	return nil
+}
+
+func (r *Repository) ListConversationMessages(ctx context.Context, conversationID string) ([]ConversationMessage, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id::text, conversation_id::text, role, content, generation_run_id::text, created_at, updated_at
+		FROM llm_messages
+		WHERE conversation_id = $1
+		ORDER BY created_at, id
+	`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]ConversationMessage, 0)
+	for rows.Next() {
+		message, err := scanConversationMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, message)
+	}
+	return result, rows.Err()
+}
+
+func (r *Repository) AppendConversationMessage(ctx context.Context, conversationID string, role string, content string, runID *string) (ConversationMessage, error) {
+	content = strings.TrimSpace(content)
+	if (role != "user" && role != "assistant") || content == "" {
+		return ConversationMessage{}, ErrInvalidGenerationRequest
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return ConversationMessage{}, err
+	}
+	defer tx.Rollback(ctx)
+	message, err := scanConversationMessage(tx.QueryRow(ctx, `
+		INSERT INTO llm_messages (conversation_id, role, content, generation_run_id)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text, created_at, updated_at
+	`, conversationID, role, content, nullableString(runID)))
+	if err != nil {
+		return ConversationMessage{}, normalizeNotFound(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE llm_conversations
+		SET
+			title = CASE
+				WHEN title = '新对话' AND $2 = 'user' THEN left($3, 40)
+				ELSE title
+			END,
+			updated_at = now()
+		WHERE id = $1
+	`, conversationID, role, content); err != nil {
+		return ConversationMessage{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ConversationMessage{}, err
+	}
+	return message, nil
+}
+
+func (r *Repository) UpdateConversationMessage(ctx context.Context, messageID string, content string) (ConversationMessage, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ConversationMessage{}, ErrInvalidGenerationRequest
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return ConversationMessage{}, err
+	}
+	defer tx.Rollback(ctx)
+	var conversationID string
+	var createdAt time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT conversation_id::text, created_at FROM llm_messages WHERE id = $1 AND role = 'user'
+	`, messageID).Scan(&conversationID, &createdAt); err != nil {
+		return ConversationMessage{}, normalizeNotFound(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM llm_messages
+		WHERE conversation_id = $1 AND (created_at, id) > ($2, $3::uuid)
+	`, conversationID, createdAt, messageID); err != nil {
+		return ConversationMessage{}, err
+	}
+	message, err := scanConversationMessage(tx.QueryRow(ctx, `
+		UPDATE llm_messages SET content = $2, updated_at = now() WHERE id = $1
+		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text, created_at, updated_at
+	`, messageID, content))
+	if err != nil {
+		return ConversationMessage{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE llm_conversations SET updated_at = now() WHERE id = $1`, conversationID); err != nil {
+		return ConversationMessage{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ConversationMessage{}, err
+	}
+	return message, nil
+}
+
+type conversationMessageScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanConversationMessage(scanner conversationMessageScanner) (ConversationMessage, error) {
+	var message ConversationMessage
+	var runID sql.NullString
+	err := scanner.Scan(
+		&message.ID, &message.ConversationID, &message.Role, &message.Content,
+		&runID, &message.CreatedAt, &message.UpdatedAt,
+	)
+	if runID.Valid {
+		message.GenerationRunID = &runID.String
+	}
+	return message, err
 }
 
 func (r *Repository) GetModelProfile(ctx context.Context, projectID string, profileID string) (ModelProfile, error) {
@@ -218,50 +408,34 @@ func (r *Repository) ListBlockCanonFacts(ctx context.Context, projectID string, 
 }
 
 func (r *Repository) ListRecentBlocks(ctx context.Context, projectID string, blockID string, limit int) ([]RecentBlockContext, error) {
-	if limit <= 0 {
+	if limit == 0 {
 		return []RecentBlockContext{}, nil
 	}
 	rows, err := r.db.Query(ctx, `
-		WITH current_block AS (
-			SELECT id, branch_id, order_index
+		WITH RECURSIVE story_walk AS (
+			SELECT id, 0 AS depth, ARRAY[id] AS visited
 			FROM blocks
 			WHERE id = $2 AND project_id = $1
+			UNION ALL
+			SELECT edge.source_block_id, walk.depth + 1, walk.visited || edge.source_block_id
+			FROM story_walk walk
+			JOIN graph_edges edge ON edge.target_block_id = walk.id
+			WHERE edge.project_id = $1
+				AND edge.edge_type IN ('next', 'fork')
+				AND NOT edge.source_block_id = ANY(walk.visited)
+		),
+		story_path AS (
+			SELECT id, MIN(depth) AS depth
+			FROM story_walk
+			WHERE id <> $2
+			GROUP BY id
 		),
 		candidates AS (
-			SELECT b.id, b.title, br.content, br.content_format, b.order_index, 1 AS rank_group
+			SELECT b.id, b.title, revision.content, revision.content_format, b.order_index, path.depth
 			FROM blocks b
-			JOIN current_block cb ON cb.branch_id IS NOT DISTINCT FROM b.branch_id
-			JOIN block_revisions br ON br.id = b.current_revision_id
+			JOIN story_path path ON path.id = b.id
+			JOIN block_revisions revision ON revision.id = b.current_revision_id
 			WHERE b.project_id = $1
-				AND b.id <> $2
-				AND b.order_index < cb.order_index
-			UNION
-			SELECT b.id, b.title, br.content, br.content_format, b.order_index, 0 AS rank_group
-			FROM graph_edges ge
-			JOIN blocks b ON b.id = ge.source_block_id
-			JOIN block_revisions br ON br.id = b.current_revision_id
-			WHERE ge.project_id = $1
-				AND ge.target_block_id = $2
-				AND ge.edge_type IN ('next', 'references', 'summarizes')
-			UNION
-			SELECT b.id, b.title, br.content, br.content_format, b.order_index, 0 AS rank_group
-			FROM graph_edges ge
-			JOIN blocks b ON b.id = ge.target_block_id
-			JOIN block_revisions br ON br.id = b.current_revision_id
-			WHERE ge.project_id = $1
-				AND ge.source_block_id = $2
-				AND ge.edge_type IN ('references', 'summarizes')
-		),
-		ranked AS (
-			SELECT
-				id,
-				title,
-				content,
-				content_format,
-				order_index,
-				rank_group,
-				row_number() OVER (PARTITION BY id ORDER BY rank_group, order_index DESC) AS duplicate_rank
-			FROM candidates
 		)
 		SELECT
 			id::text,
@@ -269,10 +443,13 @@ func (r *Repository) ListRecentBlocks(ctx context.Context, projectID string, blo
 			content,
 			content_format,
 			order_index
-		FROM ranked
-		WHERE duplicate_rank = 1
-		ORDER BY rank_group, order_index DESC
-		LIMIT $3
+		FROM (
+			SELECT *
+			FROM candidates
+			ORDER BY depth ASC, order_index DESC, id
+			LIMIT NULLIF($3, -1)
+		) selected
+		ORDER BY depth DESC, order_index ASC, id
 	`, projectID, blockID, limit)
 	if err != nil {
 		return nil, err

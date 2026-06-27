@@ -592,3 +592,34 @@
 - 分支列表支持切换当前 branch 和归档不用的 branch。
 - 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍有既有 bundle 体积警告。
 - 更新 Branch / Generation API 文档并完成 Phase 7 清单。
+
+### Step 60: 支持自选故事线上下文节点数量
+
+- 生成、候选生成、流式生成和上下文预览请求新增 `context_node_count`，未传时兼容为前 1 个节点。
+- 支持输入任意非负前文节点数；`0` 表示不加入前文，也可选择当前故事线全部前文节点。
+- Context Builder 沿当前节点的 `next` / `fork` 图边递归加载故事前文，并按根节点到当前节点的顺序组装；其他分支和引用边不会混入，“全部”仍受模型 token budget 裁剪。
+- 将本次选择写入 generation run 的 context snapshot，便于追溯每次生成使用的上下文策略。
+- 在 Block LLM 面板增加故事线前文节点选择器，并同步更新上下文预览。
+- 添加请求默认值、全部节点和非法数量校验测试；运行 Go 测试、前端类型检查和生产构建均通过，Vite 仍有既有 bundle 体积警告。
+- 使用现有项目向 `context-preview` 发送 `context_node_count: -1`，确认递归路径 SQL 返回完整前文列表，并按 token budget 标记最终纳入项。
+- 更新 `ARCHITECTURE.md` 的 Phase 5 工作清单和验收标准。
+
+### Step 61: 将 LLM 操作升级为持久化 Chatbox
+
+- 新增 `llm_conversations` 与 `llm_messages`，对话归属于 block，assistant message 可关联 generation run。
+- 新增对话 list/create/update/delete、消息 list/update API；编辑历史 user message 时会截断后续旧消息。
+- 生成请求支持 `conversation_id`，调用模型时按 `system + 历史 user/assistant + 当前 user` 组装多轮消息。
+- 生成请求支持本轮覆盖 temperature、top_p 和 max_tokens，不修改原 Model Profile。
+- LLM 操作界面改为消息流与底部 Chatbox：模型快捷切换、发送/停止位于输入框底栏。
+- 自由生成、续写、改写等任务类型，以及上下文选择和参数调整收进二级工具菜单。
+- 支持创建、切换、删除 block 对话；每轮消息支持复制，user 消息支持编辑并从该轮重新开始。
+- 保留上下文预览、候选生成和将最新回复保存为 Revision 的现有能力。
+- 运行 Go 测试、前端类型检查和生产构建均通过；使用真实数据库验证 conversation create/list/delete，并在浏览器中确认 Chatbox 自动展开和二级菜单不被裁切。
+
+### Step 62: 将写作操作升级为可编辑 Prompt 库
+
+- 为每个项目初始化自由生成、续写、改写、局部改写、扩写、缩写和润色七个默认操作，默认操作以普通 `prompt_templates` 数据保存，不再只是界面中的写死选项。
+- 新项目通过数据库 trigger 自动获得默认操作；已有项目通过一次性兼容迁移补齐，用户删除默认操作后不会在后续启动时被重复创建。
+- LLM Chatbox 接入 Prompt Template CRUD，可选择、新增、编辑和删除写作操作；生成与上下文预览明确携带当前 `prompt_template_id`。
+- 重做写作操作与上下文二级菜单：使用标题、说明、列表选中态、内嵌 Prompt 编辑器和分区式上下文预览，视觉与当前 Chatbox 保持一致。
+- Prompt 编辑器展示当前实际支持的模板变量，项目架构文档同步修正变量列表。

@@ -41,6 +41,11 @@ type GenerateOnceRequest struct {
 	PromptTemplateID       *string  `json:"prompt_template_id"`
 	SelectedText           string   `json:"selected_text"`
 	UserInstruction        string   `json:"user_instruction"`
+	ContextNodeCount       *int     `json:"context_node_count"`
+	ConversationID         *string  `json:"conversation_id"`
+	Temperature            *float64 `json:"temperature"`
+	TopP                   *float64 `json:"top_p"`
+	MaxTokens              *int     `json:"max_tokens"`
 	ExcludedContextItemIDs []string `json:"excluded_context_item_ids"`
 }
 
@@ -54,6 +59,7 @@ type GenerateOnceResponse struct {
 	ContextPreview   ContextPreview `json:"context_preview"`
 	ModelProfileID   string         `json:"model_profile_id"`
 	PromptTemplateID *string        `json:"prompt_template_id"`
+	ConversationID   *string        `json:"conversation_id"`
 }
 
 type GenerateCandidatesRequest struct {
@@ -76,7 +82,40 @@ type GenerateStreamEvent struct {
 	ContextPreview   *ContextPreview `json:"context_preview,omitempty"`
 	ModelProfileID   string          `json:"model_profile_id,omitempty"`
 	PromptTemplateID *string         `json:"prompt_template_id,omitempty"`
+	ConversationID   *string         `json:"conversation_id,omitempty"`
 	Error            string          `json:"error,omitempty"`
+}
+
+type Conversation struct {
+	ID        string    `json:"id"`
+	ProjectID string    `json:"project_id"`
+	BlockID   string    `json:"block_id"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ConversationMessage struct {
+	ID              string    `json:"id"`
+	ConversationID  string    `json:"conversation_id"`
+	Role            string    `json:"role"`
+	Content         string    `json:"content"`
+	GenerationRunID *string   `json:"generation_run_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type CreateConversationRequest struct {
+	ProjectID string `json:"project_id"`
+	Title     string `json:"title"`
+}
+
+type UpdateConversationRequest struct {
+	Title string `json:"title"`
+}
+
+type UpdateConversationMessageRequest struct {
+	Content string `json:"content"`
 }
 
 type GenerationRun struct {
@@ -269,7 +308,30 @@ func (req GenerateOnceRequest) normalized() (GenerateOnceRequest, error) {
 			req.PromptTemplateID = &trimmed
 		}
 	}
+	if req.ConversationID != nil {
+		trimmed := strings.TrimSpace(*req.ConversationID)
+		if trimmed == "" {
+			req.ConversationID = nil
+		} else {
+			req.ConversationID = &trimmed
+		}
+	}
 	if req.ProjectID == "" || req.BlockID == "" || req.TaskType == "" || req.ModelProfileID == "" {
+		return req, ErrInvalidGenerationRequest
+	}
+	if req.ContextNodeCount == nil {
+		defaultCount := 1
+		req.ContextNodeCount = &defaultCount
+	} else if *req.ContextNodeCount < -1 {
+		return req, ErrInvalidGenerationRequest
+	}
+	if req.Temperature != nil && (*req.Temperature < 0 || *req.Temperature > 2) {
+		return req, ErrInvalidGenerationRequest
+	}
+	if req.TopP != nil && (*req.TopP < 0 || *req.TopP > 1) {
+		return req, ErrInvalidGenerationRequest
+	}
+	if req.MaxTokens != nil && *req.MaxTokens <= 0 {
 		return req, ErrInvalidGenerationRequest
 	}
 	req.ExcludedContextItemIDs = normalizeStringSet(req.ExcludedContextItemIDs)

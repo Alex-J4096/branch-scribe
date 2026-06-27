@@ -18,13 +18,14 @@ const (
 var keywordPattern = regexp.MustCompile(`[\p{Han}]{2,}|[A-Za-z0-9]{3,}`)
 
 type contextSnapshot struct {
-	ProjectID       string         `json:"project_id"`
-	BlockID         string         `json:"block_id"`
-	TaskType        string         `json:"task_type"`
-	SelectedText    string         `json:"selected_text"`
-	UserInstruction string         `json:"user_instruction"`
-	ContextPreview  ContextPreview `json:"context_preview"`
-	Items           []ContextItem  `json:"items"`
+	ProjectID        string         `json:"project_id"`
+	BlockID          string         `json:"block_id"`
+	TaskType         string         `json:"task_type"`
+	ContextNodeCount int            `json:"context_node_count"`
+	SelectedText     string         `json:"selected_text"`
+	UserInstruction  string         `json:"user_instruction"`
+	ContextPreview   ContextPreview `json:"context_preview"`
+	Items            []ContextItem  `json:"items"`
 }
 
 func (h *Handler) BuildContextPreview(ctx context.Context, req GenerateOnceRequest) (ContextPreview, error) {
@@ -76,7 +77,7 @@ func (h *Handler) buildContext(ctx context.Context, req GenerateOnceRequest, blo
 	currentBlock := normalizeBlockContent(blockContext.Content, blockContext.ContentFormat)
 	keywords := extractContextKeywords(req, currentBlock, blockContext.CanonFacts)
 
-	recentBlocks, err := h.repo.ListRecentBlocks(ctx, req.ProjectID, req.BlockID, 4)
+	recentBlocks, err := h.repo.ListRecentBlocks(ctx, req.ProjectID, req.BlockID, *req.ContextNodeCount)
 	if err != nil {
 		return ContextPreview{}, err
 	}
@@ -240,13 +241,14 @@ func renderContextText(items []ContextItem) map[string]string {
 
 func snapshotForPreview(req GenerateOnceRequest, preview ContextPreview) json.RawMessage {
 	snapshot, _ := json.Marshal(contextSnapshot{
-		ProjectID:       req.ProjectID,
-		BlockID:         req.BlockID,
-		TaskType:        req.TaskType,
-		SelectedText:    req.SelectedText,
-		UserInstruction: req.UserInstruction,
-		ContextPreview:  preview,
-		Items:           preview.Items,
+		ProjectID:        req.ProjectID,
+		BlockID:          req.BlockID,
+		TaskType:         req.TaskType,
+		ContextNodeCount: *req.ContextNodeCount,
+		SelectedText:     req.SelectedText,
+		UserInstruction:  req.UserInstruction,
+		ContextPreview:   preview,
+		Items:            preview.Items,
 	})
 	return snapshot
 }

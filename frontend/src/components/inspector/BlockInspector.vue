@@ -7,21 +7,35 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   CopyPlus,
   Eye,
   FileText,
   GitFork,
   MapPin,
+  Pencil,
+  Plus,
   RefreshCw,
   Save,
-  Sparkles,
+  Send,
+  Settings2,
   SquarePen,
   Tags,
+  Trash2,
+  Wrench,
 } from 'lucide-vue-next'
 
 import { api } from '@/api/client'
 import RichTextEditor from '@/components/editor/RichTextEditor.vue'
-import type { CanonEntity, ContextPreview, GenerateOnceInput, GenerateOnceResult, ModelProfile, Revision } from '@/api/types'
+import type {
+  CanonEntity,
+  ContextPreview,
+  GenerateOnceInput,
+  GenerateOnceResult,
+  LLMConversationMessage,
+  PromptTemplate,
+  Revision,
+} from '@/api/types'
 
 type InspectorMode = 'all' | 'sidebar' | 'editor' | 'llm'
 type InspectorSection = 'title' | 'associations' | 'summary' | 'editor' | 'llm' | 'fork' | 'revisions'
@@ -46,8 +60,22 @@ const diffBaseRevisionId = ref('')
 const diffTargetRevisionId = ref('')
 const selectedModelProfileId = ref('')
 const generationTaskType = ref('continue')
+const selectedPromptTemplateId = ref('')
 const generationInstruction = ref('')
+const contextNodeCount = ref(1)
+const selectedConversationId = ref('')
+const pendingUserMessage = ref('')
+const editingMessageId = ref('')
+const editingMessageContent = ref('')
+const temperatureOverride = ref(1)
+const topPOverride = ref(1)
+const maxTokensOverride = ref(4096)
 const generationSelectedText = ref('')
+const operationEditorOpen = ref(false)
+const operationEditorId = ref('')
+const operationNameDraft = ref('')
+const operationPromptDraft = ref('')
+const operationError = ref('')
 const editorSelectedText = ref('')
 const selectedCharacterIds = ref<string[]>([])
 const selectedLocationId = ref('')
@@ -79,16 +107,6 @@ let autosaveTimer: ReturnType<typeof window.setTimeout> | null = null
 let generationAbortController: AbortController | null = null
 const richTextEditorRef = ref<InstanceType<typeof RichTextEditor> | null>(null)
 
-const generationTasks = [
-  { value: 'free_write', label: '自由生成' },
-  { value: 'continue', label: '续写' },
-  { value: 'rewrite_block', label: '改写' },
-  { value: 'rewrite_selection', label: '局部改写' },
-  { value: 'expand', label: '扩写' },
-  { value: 'condense', label: '缩写' },
-  { value: 'polish', label: '润色' },
-]
-
 const blockQuery = useQuery({
   queryKey: computed(() => ['block', props.blockId]),
   queryFn: () => api.getBlock(props.blockId),
@@ -103,6 +121,13 @@ const modelProfilesQuery = useQuery({
   queryKey: computed(() => ['model-profiles', props.projectId]),
   queryFn: () => api.listModelProfiles(props.projectId),
 })
+
+const promptTemplatesQuery = useQuery({
+  queryKey: computed(() => ['prompt-templates', props.projectId]),
+  queryFn: () => api.listPromptTemplates(props.projectId),
+})
+
+const defaultOperationOrder = ['free_write', 'continue', 'rewrite_block', 'rewrite_selection', 'expand', 'condense', 'polish']
 
 const charactersQuery = useQuery({
   queryKey: computed(() => ['canon', props.projectId, 'character']),
@@ -119,11 +144,35 @@ const summariesQuery = useQuery({
   queryFn: () => api.listSummaries(props.projectId),
 })
 
+const conversationsQuery = useQuery({
+  queryKey: computed(() => ['llm-conversations', props.blockId]),
+  queryFn: () => api.listLLMConversations(props.blockId),
+})
+
+const conversationMessagesQuery = useQuery({
+  queryKey: computed(() => ['llm-messages', selectedConversationId.value]),
+  queryFn: () => api.listLLMConversationMessages(selectedConversationId.value),
+  enabled: computed(() => Boolean(selectedConversationId.value)),
+})
+
 const blockDetail = computed(() => blockQuery.data.value)
 const revisions = computed(() => revisionsQuery.data.value ?? [])
 const modelProfiles = computed(() => (modelProfilesQuery.data.value ?? []).filter((profile) => profile.profile_type === 'llm'))
+const promptOperations = computed(() => [...(promptTemplatesQuery.data.value ?? [])].sort((left, right) => {
+  const leftIndex = defaultOperationOrder.indexOf(left.task_type)
+  const rightIndex = defaultOperationOrder.indexOf(right.task_type)
+  if (leftIndex < 0 && rightIndex < 0) return left.created_at.localeCompare(right.created_at)
+  if (leftIndex < 0) return 1
+  if (rightIndex < 0) return -1
+  return leftIndex - rightIndex
+}))
+const selectedPromptOperation = computed(
+  () => promptOperations.value.find((operation) => operation.id === selectedPromptTemplateId.value) ?? null,
+)
 const characters = computed(() => charactersQuery.data.value ?? [])
 const locations = computed(() => locationsQuery.data.value ?? [])
+const conversations = computed(() => conversationsQuery.data.value ?? [])
+const conversationMessages = computed(() => conversationMessagesQuery.data.value ?? [])
 const currentRevision = computed(() => blockDetail.value?.current_revision ?? null)
 const currentSummary = computed(() => {
   const block = blockDetail.value?.block
@@ -188,7 +237,6 @@ const hasAssociations = computed(
   () => associatedCharacters.value.length > 0 || Boolean(associatedLocation.value) || savedTags.value.length > 0,
 )
 const includedContextItems = computed(() => contextPreview.value?.items.filter((item) => item.included) ?? [])
-const skippedContextItems = computed(() => contextPreview.value?.items.filter((item) => !item.included) ?? [])
 const visibleSections = computed<Set<InspectorSection>>(() => {
   switch (props.mode) {
     case 'sidebar':
@@ -262,6 +310,51 @@ watch(
 )
 
 watch(
+  promptOperations,
+  (operations) => {
+    const selected = operations.find((operation) => operation.id === selectedPromptTemplateId.value)
+    if (selected) {
+      generationTaskType.value = selected.task_type
+      return
+    }
+    const next = operations.find((operation) => operation.task_type === generationTaskType.value)
+      ?? operations.find((operation) => operation.task_type === 'continue')
+      ?? operations[0]
+    selectedPromptTemplateId.value = next?.id ?? ''
+    if (next) generationTaskType.value = next.task_type
+  },
+  { immediate: true },
+)
+
+watch(
+  selectedModelProfile,
+  (profile) => {
+    if (!profile) return
+    temperatureOverride.value = profile.temperature
+    topPOverride.value = profile.top_p
+    maxTokensOverride.value = profile.max_tokens
+  },
+  { immediate: true },
+)
+
+watch(
+  conversations,
+  (items) => {
+    if (selectedConversationId.value && items.some((item) => item.id === selectedConversationId.value)) return
+    selectedConversationId.value = items[0]?.id ?? ''
+  },
+  { immediate: true },
+)
+
+watch(selectedConversationId, () => {
+  generationResult.value = null
+  streamingOutput.value = ''
+  reasoningOutput.value = ''
+  pendingUserMessage.value = ''
+  editingMessageId.value = ''
+})
+
+watch(
   () => props.blockId,
   () => {
     cancelGeneration()
@@ -277,8 +370,94 @@ watch(
     generationError.value = ''
     generationSelectedText.value = ''
     editorSelectedText.value = ''
+    selectedConversationId.value = ''
+    pendingUserMessage.value = ''
+    editingMessageId.value = ''
   },
 )
+
+watch(
+  () => props.mode,
+  (mode) => {
+    if (mode === 'llm') {
+      openSections.value.llm = true
+    }
+  },
+)
+
+const createConversation = useMutation({
+  mutationFn: () => api.createLLMConversation(props.blockId, { project_id: props.projectId }),
+  onSuccess: async (conversation) => {
+    selectedConversationId.value = conversation.id
+    await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
+  },
+})
+
+const deleteConversation = useMutation({
+  mutationFn: (conversationId: string) => api.deleteLLMConversation(conversationId),
+  onSuccess: async () => {
+    selectedConversationId.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
+  },
+})
+
+const updateConversationMessage = useMutation({
+  mutationFn: () => api.updateLLMConversationMessage(editingMessageId.value, editingMessageContent.value),
+  onSuccess: async () => {
+    editingMessageId.value = ''
+    editingMessageContent.value = ''
+    generationResult.value = null
+    streamingOutput.value = ''
+    pendingUserMessage.value = ''
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] }),
+      queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] }),
+    ])
+  },
+})
+
+const savePromptOperation = useMutation({
+  mutationFn: () => {
+    const name = operationNameDraft.value.trim()
+    const templateText = operationPromptDraft.value.trim()
+    if (!name || !templateText) throw new Error('操作名称和 Prompt 都不能为空')
+    if (operationEditorId.value) {
+      return api.updatePromptTemplate(operationEditorId.value, {
+        name,
+        template_text: templateText,
+      })
+    }
+    return api.createPromptTemplate(props.projectId, {
+      name,
+      task_type: `custom_${Date.now()}`,
+      template_text: templateText,
+      is_default: true,
+      metadata: { custom: true },
+    })
+  },
+  onSuccess: async (operation) => {
+    operationError.value = ''
+    operationEditorOpen.value = false
+    selectedPromptTemplateId.value = operation.id
+    generationTaskType.value = operation.task_type
+    await queryClient.invalidateQueries({ queryKey: ['prompt-templates', props.projectId] })
+  },
+  onError: (error) => {
+    operationError.value = error instanceof Error ? error.message : '保存操作失败'
+  },
+})
+
+const deletePromptOperation = useMutation({
+  mutationFn: (operation: PromptTemplate) => api.deletePromptTemplate(operation.id),
+  onSuccess: async () => {
+    selectedPromptTemplateId.value = ''
+    operationEditorOpen.value = false
+    await queryClient.invalidateQueries({ queryKey: ['prompt-templates', props.projectId] })
+  },
+  onError: (error) => {
+    operationError.value = error instanceof Error ? error.message : '删除操作失败'
+  },
+})
 
 watch(
   () => blockDetail.value?.block.metadata,
@@ -331,6 +510,7 @@ const saveGeneratedRevision = useMutation({
     generationResult.value = null
     streamingOutput.value = ''
     reasoningOutput.value = ''
+    pendingUserMessage.value = ''
     generationError.value = ''
     generationSelectedText.value = ''
     clearLocalDraft()
@@ -533,10 +713,6 @@ function countWords(value: string) {
   return cjkMatches.length + wordMatches.length
 }
 
-function modelProfileLabel(profile: ModelProfile) {
-  return `${profile.name} · ${profile.provider} · ${profile.model}`
-}
-
 function canonOptionLabel(entity: CanonEntity) {
   return entity.status === 'canon' ? entity.name : `${entity.name} · ${entity.status}`
 }
@@ -705,11 +881,23 @@ function toggleSection(section: keyof typeof openSections.value) {
 
 async function startGenerationStream() {
   if (!canGenerate.value || isGenerationStreaming.value) return
+  if (!generationInstruction.value.trim()) {
+    generationError.value = '请输入想和 Agent 讨论或执行的内容'
+    return
+  }
 
   const selectedText = selectedTextForGeneration.value
   if (generationTaskType.value === 'rewrite_selection' && !selectedText) {
     generationError.value = '请先在正文编辑器中选中需要局部改写的文本'
     return
+  }
+
+  if (!selectedConversationId.value) {
+    const conversation = await api.createLLMConversation(props.blockId, { project_id: props.projectId })
+    selectedConversationId.value = conversation.id
+    await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
+  } else {
+    await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
   }
 
   generationAbortController = new AbortController()
@@ -718,6 +906,7 @@ async function startGenerationStream() {
   generationResult.value = null
   streamingOutput.value = ''
   reasoningOutput.value = ''
+  pendingUserMessage.value = generationInstruction.value.trim()
 
   try {
     await api.generateStream(
@@ -742,11 +931,15 @@ async function startGenerationStream() {
             context_preview: event.context_preview ?? contextPreview.value ?? emptyContextPreview(),
             model_profile_id: event.model_profile_id ?? selectedModelProfileId.value,
             prompt_template_id: event.prompt_template_id ?? null,
+            conversation_id: event.conversation_id ?? selectedConversationId.value ?? null,
           }
           if (event.context_preview) {
             contextPreview.value = event.context_preview
             excludedContextItemIds.value = event.context_preview.excluded_item_ids
           }
+          generationInstruction.value = ''
+          pendingUserMessage.value = ''
+          void queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
           return
         }
         if (event.type === 'error') {
@@ -773,9 +966,62 @@ function buildGenerateInput(): GenerateOnceInput {
     block_id: props.blockId,
     task_type: generationTaskType.value,
     model_profile_id: selectedModelProfileId.value,
+    prompt_template_id: selectedPromptTemplateId.value || null,
     selected_text: selectedTextForGeneration.value,
     user_instruction: generationInstruction.value.trim(),
+    context_node_count: contextNodeCount.value,
+    conversation_id: selectedConversationId.value || null,
+    temperature: temperatureOverride.value,
+    top_p: topPOverride.value,
+    max_tokens: maxTokensOverride.value,
     excluded_context_item_ids: excludedContextItemIds.value,
+  }
+}
+
+function selectPromptOperation(operation: PromptTemplate) {
+  selectedPromptTemplateId.value = operation.id
+  generationTaskType.value = operation.task_type
+  operationEditorOpen.value = false
+}
+
+function beginCreatePromptOperation() {
+  operationEditorId.value = ''
+  operationNameDraft.value = ''
+  operationPromptDraft.value = '请根据用户指令完成写作任务。\n\n硬设定：\n{{canon_facts}}\n\n最近正文：\n{{recent_blocks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}'
+  operationError.value = ''
+  operationEditorOpen.value = true
+}
+
+function beginEditPromptOperation(operation: PromptTemplate) {
+  operationEditorId.value = operation.id
+  operationNameDraft.value = operation.name
+  operationPromptDraft.value = operation.template_text
+  operationError.value = ''
+  operationEditorOpen.value = true
+}
+
+function removeEditedPromptOperation() {
+  const operation = promptOperations.value.find((item) => item.id === operationEditorId.value)
+  if (operation) deletePromptOperation.mutate(operation)
+}
+
+async function copyMessage(content: string) {
+  await navigator.clipboard.writeText(content)
+}
+
+function beginEditMessage(message: LLMConversationMessage) {
+  editingMessageId.value = message.id
+  editingMessageContent.value = message.content
+}
+
+function cancelEditMessage() {
+  editingMessageId.value = ''
+  editingMessageContent.value = ''
+}
+
+function submitComposer() {
+  if (!isGenerationStreaming.value) {
+    void startGenerationStream()
   }
 }
 
@@ -799,6 +1045,16 @@ function toggleContextItem(itemId: string) {
   if (canGenerate.value && !previewGenerationContext.isPending.value) {
     window.setTimeout(() => previewGenerationContext.mutate(), 0)
   }
+}
+
+function updateContextNodeCount(event: Event) {
+  contextNodeCount.value = Math.max(0, Number((event.target as HTMLInputElement).value) || 0)
+  contextPreview.value = null
+}
+
+function toggleAllContextNodes(event: Event) {
+  contextNodeCount.value = (event.target as HTMLInputElement).checked ? -1 : 1
+  contextPreview.value = null
 }
 
 function contextItemTypeLabel(type: string) {
@@ -1032,104 +1288,86 @@ function replaceEditorSelectionWithGeneratedContent() {
           </span>
           <Bot :size="16" aria-hidden="true" />
         </button>
-        <div v-show="openSections.llm" class="inspector-section__body llm-panel">
-          <label class="field-label">
-            <span>模型</span>
-            <select v-model="selectedModelProfileId">
-              <option value="" disabled>选择模型配置</option>
-              <option v-for="profile in modelProfiles" :key="profile.id" :value="profile.id">
-                {{ modelProfileLabel(profile) }}
+        <div v-show="openSections.llm" class="inspector-section__body llm-panel llm-chat">
+          <header class="llm-chat__header">
+            <select v-model="selectedConversationId" aria-label="选择对话">
+              <option value="">新对话</option>
+              <option v-for="conversation in conversations" :key="conversation.id" :value="conversation.id">
+                {{ conversation.title }}
               </option>
             </select>
-          </label>
-
-          <div class="llm-task-grid" role="group" aria-label="LLM task type">
+            <button class="icon-button" type="button" title="新建对话" @click="createConversation.mutate()">
+              <Plus :size="16" aria-hidden="true" />
+            </button>
             <button
-              v-for="task in generationTasks"
-              :key="task.value"
-              class="button"
-              :class="{ 'button--primary': generationTaskType === task.value }"
+              class="icon-button"
               type="button"
-              @click="generationTaskType = task.value"
+              title="删除当前对话"
+              :disabled="!selectedConversationId"
+              @click="selectedConversationId && deleteConversation.mutate(selectedConversationId)"
             >
-              {{ task.label }}
+              <Trash2 :size="16" aria-hidden="true" />
             </button>
-          </div>
+          </header>
 
-          <label v-if="generationTaskType === 'rewrite_selection'" class="field-label">
-            <span>选中文本</span>
-            <textarea v-model="generationSelectedText" rows="4" placeholder="在正文编辑器中选中文本后会自动带入" />
-          </label>
-
-          <label class="field-label">
-            <span>用户指令</span>
-            <textarea v-model="generationInstruction" rows="3" placeholder="补充风格、方向、限制或人物语气" />
-          </label>
-
-          <div class="context-preview">
-            <div class="context-preview__header">
-              <div>
-                <h3>上下文预览</h3>
-                <p v-if="contextPreview">
-                  {{ contextPreview.estimated_tokens }} / {{ contextPreview.token_budget }} tokens · {{ includedContextItems.length }} 项已包含
-                </p>
-                <p v-else>生成前可查看将发送给模型的上下文</p>
-              </div>
-              <button class="button" type="button" :disabled="!canGenerate || previewGenerationContext.isPending.value" @click="previewGenerationContext.mutate()">
-                <Eye :size="16" aria-hidden="true" />
-                预览
-              </button>
+          <div class="llm-chat__messages">
+            <div v-if="!conversationMessages.length && !pendingUserMessage && !streamingOutput" class="llm-chat__empty">
+              <Bot :size="24" aria-hidden="true" />
+              <strong>和写作 Agent 继续推演</strong>
+              <span>可以讨论情节、要求续写，或在多轮对话后把满意的回复保存为 Revision。</span>
             </div>
 
-            <div v-if="contextPreviewError" class="llm-message llm-message--error">
-              <AlertCircle :size="16" aria-hidden="true" />
-              <span>{{ contextPreviewError }}</span>
-            </div>
+            <article
+              v-for="message in conversationMessages"
+              :key="message.id"
+              class="chat-message"
+              :class="`chat-message--${message.role}`"
+            >
+              <div class="chat-message__role">{{ message.role === 'user' ? '你' : 'Agent' }}</div>
+              <template v-if="editingMessageId === message.id">
+                <textarea v-model="editingMessageContent" rows="4" />
+                <div class="chat-message__actions">
+                  <button class="button button--primary" type="button" @click="updateConversationMessage.mutate()">保存并截断后续</button>
+                  <button class="button" type="button" @click="cancelEditMessage">取消</button>
+                </div>
+              </template>
+              <template v-else>
+                <div class="chat-message__content">{{ message.content }}</div>
+                <div class="chat-message__actions">
+                  <button class="icon-button" type="button" title="复制" @click="copyMessage(message.content)">
+                    <Copy :size="14" aria-hidden="true" />
+                  </button>
+                  <button
+                    v-if="message.role === 'user'"
+                    class="icon-button"
+                    type="button"
+                    title="编辑此轮"
+                    @click="beginEditMessage(message)"
+                  >
+                    <Pencil :size="14" aria-hidden="true" />
+                  </button>
+                </div>
+              </template>
+            </article>
 
-            <div v-if="contextPreview" class="context-preview__items">
-              <label
-                v-for="item in contextPreview.items"
-                :key="item.id"
-                class="context-item"
-                :class="{ 'is-skipped': !item.included }"
+            <article v-if="pendingUserMessage" class="chat-message chat-message--user">
+              <div class="chat-message__role">你</div>
+              <div class="chat-message__content">{{ pendingUserMessage }}</div>
+            </article>
+            <article v-if="streamingOutput || isGenerationStreaming" class="chat-message chat-message--assistant">
+              <div class="chat-message__role">Agent</div>
+              <div class="chat-message__content">{{ streamingOutput || '正在思考…' }}</div>
+              <button
+                v-if="generationResult"
+                class="button button--primary"
+                type="button"
+                :disabled="saveGeneratedRevision.isPending.value"
+                @click="saveGeneratedRevision.mutate()"
               >
-                <input
-                  type="checkbox"
-                  :checked="!excludedContextItemIds.includes(item.id)"
-                  :disabled="item.required"
-                  @change="toggleContextItem(item.id)"
-                />
-                <span>
-                  <strong>{{ item.title }}</strong>
-                  <small>
-                    {{ contextItemTypeLabel(item.type) }} · {{ item.estimated_tokens }} tokens ·
-                    {{ item.status === 'stale' ? '摘要已过期 · ' : '' }}{{ item.included ? '包含' : '跳过' }}
-                  </small>
-                  <em>{{ item.content }}</em>
-                </span>
-              </label>
-              <div v-if="skippedContextItems.length" class="context-preview__note">
-                {{ skippedContextItems.length }} 项因预算或手动取消未进入最终 prompt。
-              </div>
-            </div>
-
-            <button v-if="contextPreview" class="button" type="button" @click="showFinalPrompt = !showFinalPrompt">
-              {{ showFinalPrompt ? '隐藏最终 Prompt' : '查看最终 Prompt' }}
-            </button>
-            <div v-if="contextPreview && showFinalPrompt" class="context-preview__prompts">
-              <div>
-                <strong>System</strong>
-                <pre>{{ contextPreview.system_prompt }}</pre>
-              </div>
-              <div>
-                <strong>User</strong>
-                <pre>{{ contextPreview.user_prompt }}</pre>
-              </div>
-              <div>
-                <strong>Final</strong>
-                <pre>{{ contextPreview.final_prompt }}</pre>
-              </div>
-            </div>
+                <Check :size="15" aria-hidden="true" />
+                保存为 Revision
+              </button>
+            </article>
           </div>
 
           <div v-if="!modelProfiles.length" class="llm-message llm-message--warning">
@@ -1145,18 +1383,150 @@ function replaceEditorSelectionWithGeneratedContent() {
             <span>{{ generationError }}</span>
           </div>
 
-          <div class="inspector__actions">
-            <button class="button button--primary" type="button" :disabled="!canGenerate || isGenerationStreaming" @click="startGenerationStream">
-              <Sparkles :size="16" aria-hidden="true" />
-              {{ isGenerationStreaming ? '生成中' : '流式生成' }}
-            </button>
-            <button v-if="isGenerationStreaming" class="button" type="button" @click="cancelGeneration">
-              取消
-            </button>
-            <button class="button" type="button" :disabled="!canGenerate || generateCandidates.isPending.value" @click="generateCandidates.mutate()">
-              <CopyPlus :size="16" aria-hidden="true" />
-              {{ generateCandidates.isPending.value ? '生成两个候选中' : '生成两个候选' }}
-            </button>
+          <div class="llm-composer">
+            <textarea
+              v-model="generationInstruction"
+              rows="3"
+              placeholder="给 Agent 发消息，Enter 发送，Shift + Enter 换行"
+              @keydown.enter.exact.prevent="submitComposer"
+            />
+            <label v-if="generationTaskType === 'rewrite_selection'" class="llm-composer__selection">
+              <span>待改写选区</span>
+              <textarea v-model="generationSelectedText" rows="2" placeholder="请先在正文中选择文本" />
+            </label>
+            <div class="llm-composer__toolbar">
+              <select v-model="selectedModelProfileId" class="llm-composer__model" aria-label="快捷模型切换">
+                <option value="" disabled>选择模型</option>
+                <option v-for="profile in modelProfiles" :key="profile.id" :value="profile.id">
+                  {{ profile.name }} · {{ profile.model }}
+                </option>
+              </select>
+
+              <details class="llm-tool-menu">
+                <summary><Wrench :size="15" aria-hidden="true" />{{ selectedPromptOperation?.name ?? '写作操作' }}</summary>
+                <div class="llm-tool-menu__panel llm-tool-menu__operations">
+                  <template v-if="!operationEditorOpen">
+                    <header class="llm-menu-header">
+                      <div><strong>写作操作</strong><small>选择操作，或编辑它背后的 Prompt</small></div>
+                      <button class="llm-menu-icon" type="button" title="新建操作" @click="beginCreatePromptOperation">
+                        <Plus :size="16" aria-hidden="true" />
+                      </button>
+                    </header>
+                    <div class="llm-operation-list">
+                      <button
+                        v-for="operation in promptOperations"
+                        :key="operation.id"
+                        class="llm-operation"
+                        :class="{ 'llm-operation--active': selectedPromptTemplateId === operation.id }"
+                        type="button"
+                        @click="selectPromptOperation(operation)"
+                      >
+                        <span class="llm-operation__mark"><Check v-if="selectedPromptTemplateId === operation.id" :size="13" /></span>
+                        <span><strong>{{ operation.name }}</strong><small>{{ operation.metadata.built_in ? '默认操作' : '自定义操作' }}</small></span>
+                        <span class="llm-operation__edit" title="编辑 Prompt" @click.stop="beginEditPromptOperation(operation)">
+                          <Pencil :size="14" aria-hidden="true" />
+                        </span>
+                      </button>
+                    </div>
+                    <div v-if="!promptOperations.length" class="llm-menu-empty">还没有写作操作，点击右上角 ＋ 创建。</div>
+                    <footer class="llm-menu-footer">
+                      <button class="llm-menu-action" type="button" :disabled="generateCandidates.isPending.value" @click="generateCandidates.mutate()">
+                        <CopyPlus :size="15" aria-hidden="true" />生成两个候选版本
+                      </button>
+                    </footer>
+                  </template>
+                  <form v-else class="llm-operation-editor" @submit.prevent="savePromptOperation.mutate()">
+                    <header class="llm-menu-header">
+                      <div><strong>{{ operationEditorId ? '编辑写作操作' : '新建写作操作' }}</strong><small>模板变量会在发送前自动替换</small></div>
+                    </header>
+                    <label><span>操作名称</span><input v-model="operationNameDraft" placeholder="例如：转换为第一人称" /></label>
+                    <label><span>Prompt</span><textarea v-model="operationPromptDraft" rows="12" /></label>
+                    <p class="llm-operation-editor__hint">
+                      可用变量：<code v-pre>{{current_block}}</code>、<code v-pre>{{recent_blocks}}</code>、<code v-pre>{{canon_facts}}</code>、<code v-pre>{{selected_text}}</code>、<code v-pre>{{user_instruction}}</code>
+                    </p>
+                    <p v-if="operationError" class="llm-operation-editor__error">{{ operationError }}</p>
+                    <footer class="llm-operation-editor__actions">
+                      <button
+                        v-if="operationEditorId"
+                        class="llm-menu-danger"
+                        type="button"
+                        :disabled="deletePromptOperation.isPending.value"
+                        @click="removeEditedPromptOperation"
+                      >
+                        <Trash2 :size="14" />删除
+                      </button>
+                      <span />
+                      <button class="button" type="button" @click="operationEditorOpen = false">取消</button>
+                      <button class="button button--primary" type="submit" :disabled="savePromptOperation.isPending.value">保存</button>
+                    </footer>
+                  </form>
+                </div>
+              </details>
+
+              <details class="llm-tool-menu">
+                <summary><Eye :size="15" aria-hidden="true" />上下文</summary>
+                <div class="llm-tool-menu__panel llm-tool-menu__context">
+                  <header class="llm-menu-header">
+                    <div><strong>本轮上下文</strong><small>控制 Agent 能看到的故事范围</small></div>
+                  </header>
+                  <div class="llm-context-section">
+                    <span class="llm-context-section__label">故事线前文</span>
+                  <div class="context-node-control">
+                    <input
+                      class="context-node-control__count"
+                      :value="contextNodeCount < 0 ? 1 : contextNodeCount"
+                      type="number"
+                      min="0"
+                      aria-label="前文节点数量"
+                      :disabled="contextNodeCount < 0"
+                      @input="updateContextNodeCount"
+                    />
+                    <label class="context-node-control__all">
+                      <input type="checkbox" :checked="contextNodeCount < 0" @change="toggleAllContextNodes" />
+                      <span>全部故事线前文</span>
+                    </label>
+                  </div>
+                  </div>
+                  <div class="llm-context-preview-head">
+                    <span>上下文项目</span>
+                    <button type="button" @click="previewGenerationContext.mutate()"><RefreshCw :size="13" />刷新预览</button>
+                  </div>
+                  <small v-if="contextPreview" class="llm-context-budget">{{ contextPreview.estimated_tokens }} / {{ contextPreview.token_budget }} tokens · 已选择 {{ includedContextItems.length }} 项</small>
+                  <div class="llm-context-items">
+                  <label v-for="item in contextPreview?.items ?? []" :key="item.id" class="context-item llm-context-item">
+                    <input
+                      type="checkbox"
+                      :checked="!excludedContextItemIds.includes(item.id)"
+                      :disabled="item.required"
+                      @change="toggleContextItem(item.id)"
+                    />
+                    <span><strong>{{ item.title }}</strong><small>{{ contextItemTypeLabel(item.type) }} · {{ item.estimated_tokens }} tokens</small></span>
+                  </label>
+                  </div>
+                </div>
+              </details>
+
+              <details class="llm-tool-menu">
+                <summary><Settings2 :size="15" aria-hidden="true" />参数</summary>
+                <div class="llm-tool-menu__panel llm-tool-menu__params">
+                  <label><span>Temperature</span><input v-model.number="temperatureOverride" type="number" min="0" max="2" step="0.1" /></label>
+                  <label><span>Top P</span><input v-model.number="topPOverride" type="number" min="0" max="1" step="0.05" /></label>
+                  <label><span>Max tokens</span><input v-model.number="maxTokensOverride" type="number" min="1" step="128" /></label>
+                </div>
+              </details>
+
+              <button v-if="isGenerationStreaming" class="llm-composer__send" type="button" title="停止" @click="cancelGeneration">■</button>
+              <button
+                v-else
+                class="llm-composer__send"
+                type="button"
+                title="发送"
+                :disabled="!canGenerate || !generationInstruction.trim()"
+                @click="submitComposer"
+              >
+                <Send :size="17" aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
           <div v-if="candidateResults.length === 2" class="candidate-compare">
@@ -1180,26 +1550,6 @@ function replaceEditorSelectionWithGeneratedContent() {
             </button>
           </div>
 
-          <div v-if="generationResult || streamingOutput || reasoningOutput" class="llm-output">
-            <div class="llm-output__meta">
-              <span>{{ generationResult?.generation_run.model ?? selectedModelProfile?.model ?? 'streaming' }}</span>
-              <span v-if="generationResult">{{ generationResult.generation_run.output_tokens }} output tokens</span>
-              <span v-else>streaming</span>
-            </div>
-            <details v-if="generationResult?.reasoning_text || reasoningOutput" class="llm-reasoning">
-              <summary>模型推理内容</summary>
-              <div>{{ generationResult?.reasoning_text || reasoningOutput }}</div>
-            </details>
-            <div v-if="generationResult?.output_text || streamingOutput" class="llm-output__text">
-              {{ generationResult?.output_text ?? streamingOutput }}
-            </div>
-            <div class="inspector__actions">
-              <button class="button button--primary" type="button" :disabled="!generationResult || saveGeneratedRevision.isPending.value" @click="saveGeneratedRevision.mutate()">
-                <Check :size="16" aria-hidden="true" />
-                {{ generationResult?.generation_run.task_type === 'rewrite_selection' ? '替换选区并保存' : '保存为 Revision' }}
-              </button>
-            </div>
-          </div>
         </div>
       </section>
 

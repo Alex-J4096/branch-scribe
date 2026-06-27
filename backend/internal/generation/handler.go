@@ -24,6 +24,12 @@ func NewHandler(repo *Repository, provider Provider) *Handler {
 }
 
 func RegisterRoutes(router gin.IRouter, handler *Handler) {
+	router.GET("/blocks/:blockId/llm-conversations", handler.ListConversations)
+	router.POST("/blocks/:blockId/llm-conversations", handler.CreateConversation)
+	router.GET("/llm-conversations/:conversationId/messages", handler.ListConversationMessages)
+	router.PATCH("/llm-conversations/:conversationId", handler.UpdateConversation)
+	router.DELETE("/llm-conversations/:conversationId", handler.DeleteConversation)
+	router.PATCH("/llm-messages/:messageId", handler.UpdateConversationMessage)
 	router.POST("/generate/context-preview", handler.ContextPreview)
 	router.POST("/generate/once", handler.GenerateOnce)
 	router.POST("/generate/candidates", handler.GenerateCandidates)
@@ -32,6 +38,74 @@ func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	router.POST("/branches/:branchId/summarize", handler.GenerateBranchSummary)
 	router.POST("/summaries/:summaryId/refresh", handler.RefreshSummary)
 	router.GET("/projects/:projectId/summaries", handler.ListSummaries)
+}
+
+func (h *Handler) ListConversations(c *gin.Context) {
+	items, err := h.repo.ListConversations(c.Request.Context(), c.Param("blockId"))
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	api.RespondOK(c, items)
+}
+
+func (h *Handler) CreateConversation(c *gin.Context) {
+	var req CreateConversationRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.ProjectID) == "" {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_CONVERSATION_REQUEST", "invalid conversation request")
+		return
+	}
+	item, err := h.repo.CreateConversation(c.Request.Context(), c.Param("blockId"), req)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, api.Envelope{Data: item, Error: nil})
+}
+
+func (h *Handler) ListConversationMessages(c *gin.Context) {
+	items, err := h.repo.ListConversationMessages(c.Request.Context(), c.Param("conversationId"))
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	api.RespondOK(c, items)
+}
+
+func (h *Handler) UpdateConversation(c *gin.Context) {
+	var req UpdateConversationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_CONVERSATION_REQUEST", "invalid conversation request")
+		return
+	}
+	item, err := h.repo.UpdateConversation(c.Request.Context(), c.Param("conversationId"), req.Title)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	api.RespondOK(c, item)
+}
+
+func (h *Handler) DeleteConversation(c *gin.Context) {
+	if err := h.repo.DeleteConversation(c.Request.Context(), c.Param("conversationId")); err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	api.RespondOK(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) UpdateConversationMessage(c *gin.Context) {
+	var req UpdateConversationMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_CONVERSATION_REQUEST", "invalid message request")
+		return
+	}
+	item, err := h.repo.UpdateConversationMessage(c.Request.Context(), c.Param("messageId"), req.Content)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	api.RespondOK(c, item)
 }
 
 func (h *Handler) GenerateCandidates(c *gin.Context) {
@@ -270,6 +344,7 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 			ContextPreview:   &prepared.ContextPreview,
 			ModelProfileID:   prepared.Request.ModelProfileID,
 			PromptTemplateID: prepared.PromptTemplateID,
+			ConversationID:   prepared.Request.ConversationID,
 		})
 		return
 	}
@@ -304,6 +379,7 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 				ContextPreview:   &prepared.ContextPreview,
 				ModelProfileID:   prepared.Request.ModelProfileID,
 				PromptTemplateID: prepared.PromptTemplateID,
+				ConversationID:   prepared.Request.ConversationID,
 			})
 			return
 		case "done":
@@ -319,6 +395,9 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 				return
 			}
 			run = succeededRun
+			if prepared.Request.ConversationID != nil && strings.TrimSpace(output) != "" {
+				_, _ = h.repo.AppendConversationMessage(c.Request.Context(), *prepared.Request.ConversationID, "assistant", output, &run.ID)
+			}
 			writeSSE(c, GenerateStreamEvent{
 				Type:             "done",
 				Reasoning:        reasoning,
@@ -329,6 +408,7 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 				ContextPreview:   &prepared.ContextPreview,
 				ModelProfileID:   prepared.Request.ModelProfileID,
 				PromptTemplateID: prepared.PromptTemplateID,
+				ConversationID:   prepared.Request.ConversationID,
 			})
 			return
 		}
@@ -370,12 +450,18 @@ func (h *Handler) generateOnce(ctx context.Context, req GenerateOnceRequest) (Ge
 			ContextPreview:   prepared.ContextPreview,
 			ModelProfileID:   prepared.Request.ModelProfileID,
 			PromptTemplateID: prepared.PromptTemplateID,
+			ConversationID:   prepared.Request.ConversationID,
 		}, err
 	}
 
 	run, err := h.repo.MarkRunSucceeded(ctx, prepared.Run.ID, result, latencyMS)
 	if err != nil {
 		return GenerateOnceResponse{}, err
+	}
+	if prepared.Request.ConversationID != nil && strings.TrimSpace(result.Content) != "" {
+		if _, err := h.repo.AppendConversationMessage(ctx, *prepared.Request.ConversationID, "assistant", result.Content, &run.ID); err != nil {
+			return GenerateOnceResponse{}, err
+		}
 	}
 	return GenerateOnceResponse{
 		OutputText:       result.Content,
@@ -387,6 +473,7 @@ func (h *Handler) generateOnce(ctx context.Context, req GenerateOnceRequest) (Ge
 		ContextPreview:   prepared.ContextPreview,
 		ModelProfileID:   prepared.Request.ModelProfileID,
 		PromptTemplateID: prepared.PromptTemplateID,
+		ConversationID:   prepared.Request.ConversationID,
 	}, nil
 }
 
@@ -416,6 +503,15 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 	}
 	if modelProfile.APIKey == nil || *modelProfile.APIKey == "" {
 		return preparedGeneration{}, fmt.Errorf("%w: model profile has no api key", ErrInvalidGenerationRequest)
+	}
+	if req.Temperature != nil {
+		modelProfile.Temperature = *req.Temperature
+	}
+	if req.TopP != nil {
+		modelProfile.TopP = *req.TopP
+	}
+	if req.MaxTokens != nil {
+		modelProfile.MaxTokens = *req.MaxTokens
 	}
 
 	blockContext, template, err := h.loadPromptInputs(ctx, req)
@@ -455,19 +551,42 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 		baseURL = *modelProfile.BaseURL
 	}
 
+	messages := []ChatMessage{{Role: "system", Content: contextPreview.SystemPrompt}}
+	if req.ConversationID != nil {
+		conversation, err := h.repo.GetConversation(ctx, *req.ConversationID)
+		if err != nil || conversation.ProjectID != req.ProjectID || conversation.BlockID != req.BlockID {
+			return preparedGeneration{}, ErrGenerationResourceNotFound
+		}
+		history, err := h.repo.ListConversationMessages(ctx, *req.ConversationID)
+		if err != nil {
+			return preparedGeneration{}, err
+		}
+		for _, message := range history {
+			messages = append(messages, ChatMessage{Role: message.Role, Content: message.Content})
+		}
+		if _, err := h.repo.AppendConversationMessage(ctx, *req.ConversationID, "user", conversationUserContent(req), &run.ID); err != nil {
+			return preparedGeneration{}, err
+		}
+	}
+	messages = append(messages, ChatMessage{Role: "user", Content: contextPreview.UserPrompt})
+
 	return preparedGeneration{
-		Request:      req,
-		ModelProfile: modelProfile,
-		Run:          run,
-		Prompt:       prompt,
-		Messages: []ChatMessage{
-			{Role: "system", Content: contextPreview.SystemPrompt},
-			{Role: "user", Content: contextPreview.UserPrompt},
-		},
+		Request:          req,
+		ModelProfile:     modelProfile,
+		Run:              run,
+		Prompt:           prompt,
+		Messages:         messages,
 		ContextPreview:   contextPreview,
 		PromptTemplateID: promptTemplateID,
 		BaseURL:          baseURL,
 	}, nil
+}
+
+func conversationUserContent(req GenerateOnceRequest) string {
+	if value := strings.TrimSpace(req.UserInstruction); value != "" {
+		return value
+	}
+	return "执行 " + req.TaskType
 }
 
 func writeSSE(c *gin.Context, event GenerateStreamEvent) {

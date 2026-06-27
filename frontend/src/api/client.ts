@@ -419,5 +419,26 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  listLLMConversations: (blockId: string) =>
+    request<import('./types').LLMConversation[]>(`/blocks/${blockId}/llm-conversations`),
+  createLLMConversation: (blockId: string, input: { project_id: string; title?: string }) =>
+    request<import('./types').LLMConversation>(`/blocks/${blockId}/llm-conversations`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  listLLMConversationMessages: (conversationId: string) =>
+    request<import('./types').LLMConversationMessage[]>(`/llm-conversations/${conversationId}/messages`),
+  updateLLMConversation: (conversationId: string, title: string) =>
+    request<import('./types').LLMConversation>(`/llm-conversations/${conversationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    }),
+  deleteLLMConversation: (conversationId: string) =>
+    request<{ deleted: boolean }>(`/llm-conversations/${conversationId}`, { method: 'DELETE' }),
+  updateLLMConversationMessage: (messageId: string, content: string) =>
+    request<import('./types').LLMConversationMessage>(`/llm-messages/${messageId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ content }),
+    }),
   generateStream,
 }
