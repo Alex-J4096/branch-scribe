@@ -70,6 +70,7 @@ func (p *OpenAICompatibleProvider) GenerateOnce(ctx context.Context, req Generat
 
 	return CompletionResult{
 		Content:      decoded.Choices[0].Message.Content,
+		Reasoning:    firstNonEmpty(decoded.Choices[0].Message.ReasoningContent, decoded.Choices[0].Message.Reasoning),
 		InputTokens:  decoded.Usage.PromptTokens,
 		OutputTokens: decoded.Usage.CompletionTokens,
 	}, nil
@@ -150,6 +151,10 @@ func (p *OpenAICompatibleProvider) GenerateStream(ctx context.Context, req Gener
 				if choice.Delta.Content != "" {
 					events <- TokenEvent{Type: "delta", Content: choice.Delta.Content}
 				}
+				reasoning := firstNonEmpty(choice.Delta.ReasoningContent, choice.Delta.Reasoning)
+				if reasoning != "" {
+					events <- TokenEvent{Type: "reasoning", Reasoning: reasoning}
+				}
 			}
 		}
 		if err := scanner.Err(); err != nil {
@@ -160,6 +165,15 @@ func (p *OpenAICompatibleProvider) GenerateStream(ctx context.Context, req Gener
 	}()
 
 	return events, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type openAIChatCompletionRequest struct {

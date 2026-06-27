@@ -19,7 +19,7 @@ func TestOpenAICompatibleProviderGenerateOnce(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"choices": [{"message": {"role": "assistant", "content": "生成结果"}}],
+			"choices": [{"message": {"role": "assistant", "content": "生成结果", "reasoning_content": "推理内容"}}],
 			"usage": {"prompt_tokens": 12, "completion_tokens": 34}
 		}`))
 	}))
@@ -41,6 +41,9 @@ func TestOpenAICompatibleProviderGenerateOnce(t *testing.T) {
 	if result.Content != "生成结果" {
 		t.Fatalf("unexpected content: %q", result.Content)
 	}
+	if result.Reasoning != "推理内容" {
+		t.Fatalf("unexpected reasoning: %q", result.Reasoning)
+	}
 	if result.InputTokens != 12 || result.OutputTokens != 34 {
 		t.Fatalf("unexpected usage: %+v", result)
 	}
@@ -55,6 +58,7 @@ func TestOpenAICompatibleProviderGenerateStream(t *testing.T) {
 			t.Fatalf("missing stream accept header")
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先分析\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"第一段\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"第二段\"}}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":22}}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -76,10 +80,14 @@ func TestOpenAICompatibleProviderGenerateStream(t *testing.T) {
 	}
 
 	var output string
+	var reasoning string
 	var done TokenEvent
 	for event := range events {
 		if event.Type == "delta" {
 			output += event.Content
+		}
+		if event.Type == "reasoning" {
+			reasoning += event.Reasoning
 		}
 		if event.Type == "done" {
 			done = event
@@ -87,6 +95,9 @@ func TestOpenAICompatibleProviderGenerateStream(t *testing.T) {
 	}
 	if output != "第一段第二段" {
 		t.Fatalf("unexpected stream output: %q", output)
+	}
+	if reasoning != "先分析" {
+		t.Fatalf("unexpected stream reasoning: %q", reasoning)
 	}
 	if done.InputTokens != 11 || done.OutputTokens != 22 {
 		t.Fatalf("unexpected usage: %+v", done)

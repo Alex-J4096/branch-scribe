@@ -23,8 +23,24 @@ func NewHandler(repo *Repository, provider Provider) *Handler {
 }
 
 func RegisterRoutes(router gin.IRouter, handler *Handler) {
+	router.POST("/generate/context-preview", handler.ContextPreview)
 	router.POST("/generate/once", handler.GenerateOnce)
 	router.POST("/generate/stream", handler.GenerateStream)
+}
+
+func (h *Handler) ContextPreview(c *gin.Context) {
+	var req GenerateOnceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_GENERATION_REQUEST", "invalid generation request")
+		return
+	}
+
+	preview, err := h.BuildContextPreview(c.Request.Context(), req)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	api.RespondOK(c, preview)
 }
 
 func (h *Handler) GenerateOnce(c *gin.Context) {
@@ -67,7 +83,7 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 		Model:       prepared.ModelProfile.Model,
 		BaseURL:     prepared.BaseURL,
 		APIKey:      *prepared.ModelProfile.APIKey,
-		Messages:    []ChatMessage{{Role: "user", Content: prepared.Prompt}},
+		Messages:    prepared.Messages,
 		Temperature: prepared.ModelProfile.Temperature,
 		TopP:        prepared.ModelProfile.TopP,
 		MaxTokens:   prepared.ModelProfile.MaxTokens,
@@ -84,6 +100,9 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 			Error:            err.Error(),
 			GenerationRun:    &run,
 			Prompt:           prepared.Prompt,
+			SystemPrompt:     prepared.ContextPreview.SystemPrompt,
+			UserPrompt:       prepared.ContextPreview.UserPrompt,
+			ContextPreview:   &prepared.ContextPreview,
 			ModelProfileID:   prepared.Request.ModelProfileID,
 			PromptTemplateID: prepared.PromptTemplateID,
 		})
@@ -91,11 +110,15 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 	}
 
 	var output string
+	var reasoning string
 	for event := range stream {
 		switch event.Type {
 		case "delta":
 			output += event.Content
 			writeSSE(c, GenerateStreamEvent{Type: "delta", Content: event.Content})
+		case "reasoning":
+			reasoning += event.Reasoning
+			writeSSE(c, GenerateStreamEvent{Type: "reasoning", Reasoning: event.Reasoning})
 		case "error":
 			latencyMS := int(time.Since(startedAt).Milliseconds())
 			run := prepared.Run
@@ -111,6 +134,9 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 				Error:            message,
 				GenerationRun:    &run,
 				Prompt:           prepared.Prompt,
+				SystemPrompt:     prepared.ContextPreview.SystemPrompt,
+				UserPrompt:       prepared.ContextPreview.UserPrompt,
+				ContextPreview:   &prepared.ContextPreview,
 				ModelProfileID:   prepared.Request.ModelProfileID,
 				PromptTemplateID: prepared.PromptTemplateID,
 			})
@@ -130,8 +156,12 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 			run = succeededRun
 			writeSSE(c, GenerateStreamEvent{
 				Type:             "done",
+				Reasoning:        reasoning,
 				GenerationRun:    &run,
 				Prompt:           prepared.Prompt,
+				SystemPrompt:     prepared.ContextPreview.SystemPrompt,
+				UserPrompt:       prepared.ContextPreview.UserPrompt,
+				ContextPreview:   &prepared.ContextPreview,
 				ModelProfileID:   prepared.Request.ModelProfileID,
 				PromptTemplateID: prepared.PromptTemplateID,
 			})
@@ -154,7 +184,7 @@ func (h *Handler) generateOnce(ctx context.Context, req GenerateOnceRequest) (Ge
 		Model:       prepared.ModelProfile.Model,
 		BaseURL:     prepared.BaseURL,
 		APIKey:      *prepared.ModelProfile.APIKey,
-		Messages:    []ChatMessage{{Role: "user", Content: prepared.Prompt}},
+		Messages:    prepared.Messages,
 		Temperature: prepared.ModelProfile.Temperature,
 		TopP:        prepared.ModelProfile.TopP,
 		MaxTokens:   prepared.ModelProfile.MaxTokens,
@@ -167,7 +197,15 @@ func (h *Handler) generateOnce(ctx context.Context, req GenerateOnceRequest) (Ge
 		if updateErr == nil {
 			run = failedRun
 		}
-		return GenerateOnceResponse{GenerationRun: run, Prompt: prepared.Prompt, ModelProfileID: prepared.Request.ModelProfileID, PromptTemplateID: prepared.PromptTemplateID}, err
+		return GenerateOnceResponse{
+			GenerationRun:    run,
+			Prompt:           prepared.Prompt,
+			SystemPrompt:     prepared.ContextPreview.SystemPrompt,
+			UserPrompt:       prepared.ContextPreview.UserPrompt,
+			ContextPreview:   prepared.ContextPreview,
+			ModelProfileID:   prepared.Request.ModelProfileID,
+			PromptTemplateID: prepared.PromptTemplateID,
+		}, err
 	}
 
 	run, err := h.repo.MarkRunSucceeded(ctx, prepared.Run.ID, result, latencyMS)
@@ -176,8 +214,12 @@ func (h *Handler) generateOnce(ctx context.Context, req GenerateOnceRequest) (Ge
 	}
 	return GenerateOnceResponse{
 		OutputText:       result.Content,
+		ReasoningText:    result.Reasoning,
 		GenerationRun:    run,
 		Prompt:           prepared.Prompt,
+		SystemPrompt:     prepared.ContextPreview.SystemPrompt,
+		UserPrompt:       prepared.ContextPreview.UserPrompt,
+		ContextPreview:   prepared.ContextPreview,
 		ModelProfileID:   prepared.Request.ModelProfileID,
 		PromptTemplateID: prepared.PromptTemplateID,
 	}, nil
@@ -188,6 +230,8 @@ type preparedGeneration struct {
 	ModelProfile     ModelProfile
 	Run              GenerationRun
 	Prompt           string
+	Messages         []ChatMessage
+	ContextPreview   ContextPreview
 	PromptTemplateID *string
 	BaseURL          string
 }
@@ -209,35 +253,20 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 		return preparedGeneration{}, fmt.Errorf("%w: model profile has no api key", ErrInvalidGenerationRequest)
 	}
 
-	var blockContext BlockContext
-	if req.TaskType == "free_write" {
-		blockContext, err = h.repo.GetBlockMetadataContext(ctx, req.ProjectID, req.BlockID)
-	} else {
-		blockContext, err = h.repo.GetBlockContext(ctx, req.ProjectID, req.BlockID)
-	}
+	blockContext, template, err := h.loadPromptInputs(ctx, req)
 	if err != nil {
 		return preparedGeneration{}, err
 	}
 
-	var template *PromptTemplate
-	if req.PromptTemplateID != nil {
-		found, err := h.repo.GetPromptTemplate(ctx, req.ProjectID, *req.PromptTemplateID)
-		if err != nil {
-			return preparedGeneration{}, err
-		}
-		template = &found
-	} else if found, err := h.repo.GetDefaultPromptTemplate(ctx, req.ProjectID, req.TaskType); err == nil {
-		template = &found
-	} else if !errors.Is(err, ErrGenerationResourceNotFound) {
+	contextPreview, err := h.buildContext(ctx, req, blockContext, template, contextBudget(modelProfile))
+	if err != nil {
 		return preparedGeneration{}, err
 	}
 
-	prompt, snapshot := renderPrompt(req, blockContext, template)
+	prompt := contextPreview.FinalPrompt
+	snapshot := snapshotForPreview(req, contextPreview)
 	blockID := req.BlockID
-	var promptTemplateID *string
-	if template != nil {
-		promptTemplateID = &template.ID
-	}
+	promptTemplateID := contextPreview.PromptTemplateID
 
 	run, err := h.repo.CreateRun(ctx, GenerationRunInput{
 		ProjectID:            req.ProjectID,
@@ -262,10 +291,15 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 	}
 
 	return preparedGeneration{
-		Request:          req,
-		ModelProfile:     modelProfile,
-		Run:              run,
-		Prompt:           prompt,
+		Request:      req,
+		ModelProfile: modelProfile,
+		Run:          run,
+		Prompt:       prompt,
+		Messages: []ChatMessage{
+			{Role: "system", Content: contextPreview.SystemPrompt},
+			{Role: "user", Content: contextPreview.UserPrompt},
+		},
+		ContextPreview:   contextPreview,
 		PromptTemplateID: promptTemplateID,
 		BaseURL:          baseURL,
 	}, nil

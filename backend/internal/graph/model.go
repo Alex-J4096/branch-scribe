@@ -52,6 +52,12 @@ type CreateEdgeRequest struct {
 	Metadata      json.RawMessage `json:"metadata"`
 }
 
+type UpdateEdgeRequest struct {
+	EdgeType string          `json:"edge_type"`
+	Label    *string         `json:"label"`
+	Metadata json.RawMessage `json:"metadata"`
+}
+
 type UpdatePositionRequest struct {
 	PositionX float64 `json:"position_x"`
 	PositionY float64 `json:"position_y"`

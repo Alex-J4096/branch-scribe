@@ -1,7 +1,6 @@
 package generation
 
 import (
-	"encoding/json"
 	"html"
 	"regexp"
 	"strings"
@@ -9,20 +8,7 @@ import (
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
-type promptSnapshot struct {
-	ProjectID        string  `json:"project_id"`
-	BlockID          string  `json:"block_id"`
-	TaskType         string  `json:"task_type"`
-	CurrentBlock     string  `json:"current_block"`
-	CanonFacts       string  `json:"canon_facts"`
-	SelectedText     string  `json:"selected_text"`
-	UserInstruction  string  `json:"user_instruction"`
-	Prompt           string  `json:"prompt"`
-	PromptTemplateID *string `json:"prompt_template_id"`
-}
-
-func renderPrompt(req GenerateOnceRequest, blockContext BlockContext, template *PromptTemplate) (string, json.RawMessage) {
-	currentBlock := normalizeBlockContent(blockContext.Content, blockContext.ContentFormat)
+func renderUserPrompt(req GenerateOnceRequest, blockContext BlockContext, contextText map[string]string, template *PromptTemplate) (string, *string) {
 	templateText := defaultPromptTemplate(req.TaskType)
 	var templateID *string
 	if template != nil {
@@ -38,29 +24,25 @@ func renderPrompt(req GenerateOnceRequest, blockContext BlockContext, template *
 	if blockContext.BlockTitle != nil {
 		blockTitle = *blockContext.BlockTitle
 	}
-	canonFacts := renderCanonFacts(blockContext.CanonFacts)
 
 	prompt := strings.NewReplacer(
 		"{{project_description}}", projectDescription,
 		"{{current_block_title}}", blockTitle,
-		"{{current_block}}", currentBlock,
-		"{{canon_facts}}", canonFacts,
+		"{{current_block}}", contextText["current_block"],
+		"{{canon_facts}}", contextText["canon_facts"],
+		"{{recent_blocks}}", contextText["recent_blocks"],
+		"{{branch_summary}}", contextText["branch_summary"],
+		"{{chapter_summary}}", contextText["chapter_summary"],
+		"{{memory_chunks}}", contextText["memory_chunks"],
 		"{{selected_text}}", req.SelectedText,
 		"{{user_instruction}}", req.UserInstruction,
 	).Replace(templateText)
 
-	snapshot, _ := json.Marshal(promptSnapshot{
-		ProjectID:        req.ProjectID,
-		BlockID:          req.BlockID,
-		TaskType:         req.TaskType,
-		CurrentBlock:     currentBlock,
-		CanonFacts:       canonFacts,
-		SelectedText:     req.SelectedText,
-		UserInstruction:  req.UserInstruction,
-		Prompt:           prompt,
-		PromptTemplateID: templateID,
-	})
-	return prompt, snapshot
+	return prompt, templateID
+}
+
+func defaultSystemPrompt() string {
+	return "你是 BranchScribe 的小说创作助手。严格遵守已给出的设定、上下文和用户指令；只输出可直接放入小说正文的内容，除非用户明确要求解释。"
 }
 
 func renderCanonFacts(facts []CanonFact) string {
@@ -93,20 +75,20 @@ func normalizeBlockContent(content string, format string) string {
 func defaultPromptTemplate(taskType string) string {
 	switch taskType {
 	case "free_write":
-		return "你是小说写作助手。请完全根据用户指令生成正文，不要依赖当前 block 正文。必须遵守硬设定。只输出生成后的正文。\n\n项目简介：\n{{project_description}}\n\n硬设定：\n{{canon_facts}}\n\n用户指令：\n{{user_instruction}}"
+		return "请完全根据用户指令生成正文，不要依赖当前 block 正文。必须遵守硬设定，并参考相关记忆。只输出生成后的正文。\n\n项目简介：\n{{project_description}}\n\n硬设定：\n{{canon_facts}}\n\n相关记忆：\n{{memory_chunks}}\n\n用户指令：\n{{user_instruction}}"
 	case "continue":
-		return "你是小说写作助手。请基于当前片段继续写作，保持人物、语气和叙事连贯，必须遵守硬设定。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "请基于当前片段继续写作，保持人物、语气和叙事连贯，必须遵守硬设定。\n\n硬设定：\n{{canon_facts}}\n\n分支摘要：\n{{branch_summary}}\n\n章节摘要：\n{{chapter_summary}}\n\n最近正文：\n{{recent_blocks}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "rewrite_block":
-		return "你是小说写作助手。请根据用户指令改写当前片段，必须遵守硬设定，只输出改写后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "请根据用户指令改写当前片段，必须遵守硬设定，只输出改写后的正文。\n\n硬设定：\n{{canon_facts}}\n\n章节摘要：\n{{chapter_summary}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "rewrite_selection":
-		return "你是小说写作助手。请在理解当前片段和硬设定的基础上改写选中文本，只输出改写后的选中文本。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}"
+		return "请在理解当前片段、前后文和硬设定的基础上改写选中文本，只输出改写后的选中文本。\n\n硬设定：\n{{canon_facts}}\n\n章节摘要：\n{{chapter_summary}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}"
 	case "expand":
-		return "你是小说写作助手。请扩写当前片段，补充细节、动作和感官描写，必须遵守硬设定，只输出扩写后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "请扩写当前片段，补充细节、动作和感官描写，必须遵守硬设定，只输出扩写后的正文。\n\n硬设定：\n{{canon_facts}}\n\n最近正文：\n{{recent_blocks}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "condense":
-		return "你是小说写作助手。请压缩当前片段，保留关键情节、风格和硬设定，只输出压缩后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "请压缩当前片段，保留关键情节、风格和硬设定，只输出压缩后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	case "polish":
-		return "你是小说写作助手。请润色当前片段，提升表达和节奏，必须遵守硬设定，只输出润色后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
+		return "请润色当前片段，提升表达和节奏，必须遵守硬设定，只输出润色后的正文。\n\n硬设定：\n{{canon_facts}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}"
 	default:
-		return "你是小说写作助手。请根据当前片段、硬设定和用户指令完成写作任务。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}"
+		return "请根据当前片段、硬设定、相关记忆和用户指令完成写作任务。\n\n硬设定：\n{{canon_facts}}\n\n最近正文：\n{{recent_blocks}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}"
 	}
 }

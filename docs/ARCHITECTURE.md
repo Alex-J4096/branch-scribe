@@ -1011,6 +1011,7 @@ POST   /api/revisions/compare
 GET    /api/projects/:projectId/graph
 POST   /api/projects/:projectId/graph/edges
 PATCH  /api/projects/:projectId/graph/nodes/:blockId/position
+PATCH  /api/projects/:projectId/graph/edges/:edgeId
 DELETE /api/projects/:projectId/graph/edges/:edgeId
 ```
 
@@ -1061,7 +1062,7 @@ POST   /api/summaries/:summaryId/refresh
 ```http
 POST   /api/generate/stream
 POST   /api/generate/once
-POST   /api/context/preview
+POST   /api/generate/context-preview
 GET    /api/projects/:projectId/generation-runs
 GET    /api/generation-runs/:runId
 ```
@@ -1431,7 +1432,7 @@ branchscribe/
 ### 安全任务
 
 * [x] API key 不返回给前端。
-* [x] API key 在数据库中加密存储，或 MVP 阶段仅使用环境变量。
+* [x] MVP 阶段支持在模型配置中保存 API key，且不写入 generation_runs 或日志；也支持 `env:VAR_NAME` 引用。
 * [x] 对 LLM 请求做超时控制。
 * [x] 对服务商 API 错误做清晰提示。
 
@@ -1465,8 +1466,8 @@ branchscribe/
 * [x] 实现 Canon Entity CRUD。
 * [x] 支持 entity 类型：character、location、faction、item、rule、event。
 * [x] 实现 Memory Chunk CRUD。
-* [ ] 实现 embedding provider。
-* [ ] 实现 memory semantic search。
+* [ ] 实现 embedding provider。（暂缓）
+* [ ] 实现 memory semantic search。（暂缓，当前使用关键词检索）
 * [x] 实现 canon entity keyword search。
 * [x] 支持为 block 关联 characters、location、tags。
 * [x] 支持从 block 生成 memory chunk。
@@ -1481,7 +1482,7 @@ branchscribe/
 * [x] 在 block inspector 中添加 metadata 编辑。
 * [x] 支持为 block 选择出现角色。
 * [x] 支持为 block 选择地点。
-* [ ] 支持手动触发 reindex。
+* [ ] 支持手动触发 reindex。（暂缓）
 * [x] 显示当前 block 关联的 canon entities。
 
 ### 验收标准
@@ -1501,37 +1502,38 @@ branchscribe/
 
 ### 后端任务
 
-* [ ] 实现 Context Builder。
-* [ ] 支持按 task_type 构建上下文。
-* [ ] 支持 token budget。
-* [ ] 支持加载 current block。
-* [ ] 支持加载 recent blocks。
-* [ ] 支持加载 branch summary。
-* [ ] 支持加载 chapter summary。
-* [ ] 支持加载 canon entities。
-* [ ] 支持加载 memory chunks。
-* [ ] 支持上下文裁剪。
-* [ ] 支持 context preview API。
-* [ ] 将 context snapshot 保存到 generation_runs。
+* [x] 实现 Context Builder。
+* [x] 支持按 task_type 构建上下文。
+* [x] 支持 token budget。
+* [x] 支持加载 current block。
+* [x] 支持加载 recent blocks。
+* [x] 支持加载 branch summary。
+* [x] 支持加载 chapter summary。
+* [x] 支持加载 canon entities。
+* [x] 支持加载 memory chunks。
+* [x] 支持上下文裁剪。
+* [x] 支持 context preview API。
+* [x] 将 context snapshot 保存到 generation_runs。
 
 ### 前端任务
 
-* [ ] 实现 Context Preview Panel。
-* [ ] 展示 system prompt。
-* [ ] 展示 user prompt。
-* [ ] 展示上下文来源。
-* [ ] 展示预计 token 数。
-* [ ] 展示每个上下文 item 的类型。
-* [ ] 支持用户临时取消某个 context item。
-* [ ] 支持用户查看最终 prompt。
+* [x] 实现 Context Preview Panel。
+* [x] 展示 system prompt。
+* [x] 展示 user prompt。
+* [x] 展示上下文来源。
+* [x] 展示预计 token 数。
+* [x] 展示每个上下文 item 的类型。
+* [x] 支持用户临时取消某个 context item。
+* [x] 支持用户查看最终 prompt。
+* [x] 将 Block 详情、正文和 LLM 操作整合为可折叠、可关闭的画布浮动标签窗口。
 
 ### 验收标准
 
-* [ ] 用户执行生成前可以看到上下文预览。
-* [ ] 续写时自动包含最近正文。
-* [ ] 改写时自动包含原文和设定。
-* [ ] 局部修改时自动包含选中文本和前后文。
-* [ ] LLM 调用记录包含 input_context_snapshot。
+* [x] 用户执行生成前可以看到上下文预览。
+* [x] 续写时自动包含最近正文。
+* [x] 改写时自动包含原文和设定。
+* [x] 局部修改时自动包含选中文本和前后文。
+* [x] LLM 调用记录包含 input_context_snapshot。
 
 ---
 

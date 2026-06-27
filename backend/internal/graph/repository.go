@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -93,6 +94,37 @@ func (r *Repository) UpdatePosition(ctx context.Context, projectID string, block
 		return BlockNode{}, normalizeNotFound(err)
 	}
 	return node, nil
+}
+
+func (r *Repository) UpdateEdge(ctx context.Context, projectID string, edgeID string, req UpdateEdgeRequest) (Edge, error) {
+	if len(req.Metadata) > 0 && !json.Valid(req.Metadata) {
+		return Edge{}, ErrInvalidGraph
+	}
+	edge, err := scanEdge(r.db.QueryRow(ctx, `
+		UPDATE graph_edges
+		SET
+			edge_type = $1,
+			label = $2,
+			metadata = $3
+		WHERE id = $4 AND project_id = $5
+		RETURNING
+			id::text,
+			project_id::text,
+			source_block_id::text,
+			target_block_id::text,
+			edge_type,
+			label,
+			metadata,
+			created_at
+	`, normalizeEdgeType(req.EdgeType), nullableString(req.Label), normalizeJSON(req.Metadata), edgeID, projectID))
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Edge{}, ErrInvalidGraph
+		}
+		return Edge{}, normalizeNotFound(err)
+	}
+	return edge, nil
 }
 
 func (r *Repository) DeleteEdge(ctx context.Context, projectID string, edgeID string) error {

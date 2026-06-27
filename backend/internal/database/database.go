@@ -30,6 +30,18 @@ func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 		pool.Close()
 		return nil, err
 	}
+	if err := ensureCompatibility(connectCtx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	return pool, nil
+}
+
+func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
+		ALTER TABLE model_profiles
+		DROP CONSTRAINT IF EXISTS model_profiles_api_key_ref_check
+	`)
+	return err
 }

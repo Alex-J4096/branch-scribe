@@ -92,12 +92,15 @@ func normalizeOptionalString(value *string) *string {
 	return &trimmed
 }
 
-func normalizeAPIKeyRef(value *string) (*string, error) {
+func normalizeAPIKeyStorage(value *string) (*string, error) {
 	value = normalizeOptionalString(value)
 	if value == nil {
 		return nil, nil
 	}
-	envName := strings.TrimPrefix(*value, "env:")
+	if !strings.HasPrefix(*value, "env:") {
+		return value, nil
+	}
+	envName := strings.TrimSpace(strings.TrimPrefix(*value, "env:"))
 	if !envVarNamePattern.MatchString(envName) {
 		return nil, fmt.Errorf("%w: api key must be an environment variable name", ErrInvalidModelProfile)
 	}

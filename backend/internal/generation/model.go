@@ -15,8 +15,10 @@ var (
 )
 
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Reasoning        string `json:"reasoning,omitempty"`
 }
 
 type GenerateRequest struct {
@@ -32,31 +34,40 @@ type GenerateRequest struct {
 }
 
 type GenerateOnceRequest struct {
-	ProjectID        string  `json:"project_id"`
-	BlockID          string  `json:"block_id"`
-	TaskType         string  `json:"task_type"`
-	ModelProfileID   string  `json:"model_profile_id"`
-	PromptTemplateID *string `json:"prompt_template_id"`
-	SelectedText     string  `json:"selected_text"`
-	UserInstruction  string  `json:"user_instruction"`
+	ProjectID              string   `json:"project_id"`
+	BlockID                string   `json:"block_id"`
+	TaskType               string   `json:"task_type"`
+	ModelProfileID         string   `json:"model_profile_id"`
+	PromptTemplateID       *string  `json:"prompt_template_id"`
+	SelectedText           string   `json:"selected_text"`
+	UserInstruction        string   `json:"user_instruction"`
+	ExcludedContextItemIDs []string `json:"excluded_context_item_ids"`
 }
 
 type GenerateOnceResponse struct {
-	OutputText       string        `json:"output_text"`
-	GenerationRun    GenerationRun `json:"generation_run"`
-	Prompt           string        `json:"prompt"`
-	ModelProfileID   string        `json:"model_profile_id"`
-	PromptTemplateID *string       `json:"prompt_template_id"`
+	OutputText       string         `json:"output_text"`
+	ReasoningText    string         `json:"reasoning_text"`
+	GenerationRun    GenerationRun  `json:"generation_run"`
+	Prompt           string         `json:"prompt"`
+	SystemPrompt     string         `json:"system_prompt"`
+	UserPrompt       string         `json:"user_prompt"`
+	ContextPreview   ContextPreview `json:"context_preview"`
+	ModelProfileID   string         `json:"model_profile_id"`
+	PromptTemplateID *string        `json:"prompt_template_id"`
 }
 
 type GenerateStreamEvent struct {
-	Type             string         `json:"type"`
-	Content          string         `json:"content,omitempty"`
-	GenerationRun    *GenerationRun `json:"generation_run,omitempty"`
-	Prompt           string         `json:"prompt,omitempty"`
-	ModelProfileID   string         `json:"model_profile_id,omitempty"`
-	PromptTemplateID *string        `json:"prompt_template_id,omitempty"`
-	Error            string         `json:"error,omitempty"`
+	Type             string          `json:"type"`
+	Content          string          `json:"content,omitempty"`
+	Reasoning        string          `json:"reasoning,omitempty"`
+	GenerationRun    *GenerationRun  `json:"generation_run,omitempty"`
+	Prompt           string          `json:"prompt,omitempty"`
+	SystemPrompt     string          `json:"system_prompt,omitempty"`
+	UserPrompt       string          `json:"user_prompt,omitempty"`
+	ContextPreview   *ContextPreview `json:"context_preview,omitempty"`
+	ModelProfileID   string          `json:"model_profile_id,omitempty"`
+	PromptTemplateID *string         `json:"prompt_template_id,omitempty"`
+	Error            string          `json:"error,omitempty"`
 }
 
 type GenerationRun struct {
@@ -104,6 +115,8 @@ type BlockContext struct {
 	BlockTitle         *string
 	Content            string
 	ContentFormat      string
+	BranchID           *string
+	OrderIndex         int
 	CanonFacts         []CanonFact
 }
 
@@ -116,6 +129,28 @@ type CanonFact struct {
 	Attributes  json.RawMessage `json:"attributes"`
 	Importance  int             `json:"importance"`
 	Status      string          `json:"status"`
+}
+
+type RecentBlockContext struct {
+	ID            string
+	Title         *string
+	Content       string
+	ContentFormat string
+	OrderIndex    int
+}
+
+type MemoryContext struct {
+	ID        string
+	ChunkText string
+	ChunkKind string
+	Tags      []string
+}
+
+type SummaryContext struct {
+	ID          string
+	TargetType  string
+	SummaryText string
+	TokenCount  int
 }
 
 type GenerationRunInput struct {
@@ -134,6 +169,7 @@ type GenerationRunInput struct {
 
 type CompletionResult struct {
 	Content      string
+	Reasoning    string
 	InputTokens  int
 	OutputTokens int
 }
@@ -141,9 +177,32 @@ type CompletionResult struct {
 type TokenEvent struct {
 	Type         string
 	Content      string
+	Reasoning    string
 	Error        string
 	InputTokens  int
 	OutputTokens int
+}
+
+type ContextPreview struct {
+	SystemPrompt     string        `json:"system_prompt"`
+	UserPrompt       string        `json:"user_prompt"`
+	FinalPrompt      string        `json:"final_prompt"`
+	EstimatedTokens  int           `json:"estimated_tokens"`
+	TokenBudget      int           `json:"token_budget"`
+	Items            []ContextItem `json:"items"`
+	ExcludedItemIDs  []string      `json:"excluded_item_ids"`
+	PromptTemplateID *string       `json:"prompt_template_id"`
+}
+
+type ContextItem struct {
+	ID              string `json:"id"`
+	Type            string `json:"type"`
+	Title           string `json:"title"`
+	Content         string `json:"content"`
+	SourceID        string `json:"source_id,omitempty"`
+	EstimatedTokens int    `json:"estimated_tokens"`
+	Included        bool   `json:"included"`
+	Required        bool   `json:"required"`
 }
 
 func (req GenerateOnceRequest) normalized() (GenerateOnceRequest, error) {
@@ -164,5 +223,20 @@ func (req GenerateOnceRequest) normalized() (GenerateOnceRequest, error) {
 	if req.ProjectID == "" || req.BlockID == "" || req.TaskType == "" || req.ModelProfileID == "" {
 		return req, ErrInvalidGenerationRequest
 	}
+	req.ExcludedContextItemIDs = normalizeStringSet(req.ExcludedContextItemIDs)
 	return req, nil
+}
+
+func normalizeStringSet(values []string) []string {
+	seen := map[string]bool{}
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		normalized = append(normalized, value)
+	}
+	return normalized
 }

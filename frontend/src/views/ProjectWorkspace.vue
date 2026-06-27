@@ -11,14 +11,16 @@ import {
   Layers3,
   Link2,
   MapPin,
+  Maximize2,
+  Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
   PanelRightOpen,
   Plus,
   RefreshCw,
   Settings,
   Trash2,
+  X,
 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -40,12 +42,18 @@ const edgeSourceBlockId = ref('')
 const edgeTargetBlockId = ref('')
 const edgeType = ref<GraphEdge['edge_type']>('next')
 const edgeLabel = ref('')
+const selectedEdgeId = ref<string | null>(null)
+const selectedEdgeType = ref<GraphEdge['edge_type']>('next')
+const selectedEdgeLabel = ref('')
 const isLeftDrawerOpen = ref(true)
-const isRightDrawerOpen = ref(true)
+const isToolWindowOpen = ref(true)
+const isToolWindowCollapsed = ref(false)
+const activeWorkspacePanel = ref<'sidebar' | 'editor' | 'llm'>('editor')
 const openLeftSections = ref({
   branches: true,
   createBlock: true,
   blockList: true,
+  edgeManager: true,
   createEdge: false,
 })
 
@@ -87,6 +95,7 @@ watch(
 )
 
 const selectedBlock = computed(() => graph.value.nodes.find((node) => node.id === workspace.selectedBlockId) ?? null)
+const selectedEdge = computed(() => graph.value.edges.find((edge) => edge.id === selectedEdgeId.value) ?? null)
 
 const createBlock = useMutation({
   mutationFn: (input: CreateBlockInput) => api.createBlock(projectId.value, input),
@@ -107,6 +116,28 @@ const createEdge = useMutation({
     }),
   onSuccess: async () => {
     edgeLabel.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['graph', projectId.value] })
+  },
+})
+
+const updateEdge = useMutation({
+  mutationFn: () => {
+    if (!selectedEdge.value) throw new Error('No selected edge')
+    return api.updateEdge(projectId.value, selectedEdge.value.id, {
+      edge_type: selectedEdgeType.value,
+      label: selectedEdgeLabel.value.trim() || null,
+      metadata: selectedEdge.value.metadata,
+    })
+  },
+  onSuccess: async () => {
+    await queryClient.invalidateQueries({ queryKey: ['graph', projectId.value] })
+  },
+})
+
+const deleteEdge = useMutation({
+  mutationFn: (edgeId: string) => api.deleteEdge(projectId.value, edgeId),
+  onSuccess: async () => {
+    selectedEdgeId.value = null
     await queryClient.invalidateQueries({ queryKey: ['graph', projectId.value] })
   },
 })
@@ -134,6 +165,20 @@ watch(
   { immediate: true },
 )
 
+watch(
+  selectedEdge,
+  (edge) => {
+    if (!edge) {
+      selectedEdgeType.value = 'next'
+      selectedEdgeLabel.value = ''
+      return
+    }
+    selectedEdgeType.value = edge.edge_type
+    selectedEdgeLabel.value = edge.label ?? ''
+  },
+  { immediate: true },
+)
+
 function submitBlock() {
   const title = newBlockTitle.value.trim()
   createBlock.mutate({
@@ -149,6 +194,10 @@ function submitBlock() {
 function submitEdge() {
   if (!edgeSourceBlockId.value || !edgeTargetBlockId.value || edgeSourceBlockId.value === edgeTargetBlockId.value) return
   createEdge.mutate()
+}
+
+function selectEdge(edgeId: string | null) {
+  selectedEdgeId.value = edgeId
 }
 
 function toggleLeftSection(section: keyof typeof openLeftSections.value) {
@@ -181,7 +230,6 @@ async function refreshWorkspace() {
     class="workspace"
     :class="{
       'is-left-drawer-collapsed': !isLeftDrawerOpen,
-      'is-right-drawer-collapsed': !isRightDrawerOpen,
     }"
   >
     <header class="workspace__topbar">
@@ -300,6 +348,51 @@ async function refreshWorkspace() {
         </section>
 
         <section class="panel-section panel-section--collapsible">
+          <button
+            class="panel-section__header panel-section__header--button edge-manager__header"
+            type="button"
+            @click="toggleLeftSection('edgeManager')"
+          >
+            <span>
+              <ChevronDown v-if="openLeftSections.edgeManager" :size="16" aria-hidden="true" />
+              <ChevronRight v-else :size="16" aria-hidden="true" />
+              <Link2 :size="16" aria-hidden="true" />
+              <h2>Edge 管理</h2>
+            </span>
+            <small>{{ graph.edges.length }} edges</small>
+          </button>
+          <div v-show="openLeftSections.edgeManager" class="edge-manager">
+            <select v-model="selectedEdgeId">
+              <option :value="null">选择一条 edge</option>
+              <option v-for="edge in graph.edges" :key="edge.id" :value="edge.id">
+                {{ blockLabel(edge.source_block_id) }} -> {{ blockLabel(edge.target_block_id) }} · {{ edge.edge_type }}
+              </option>
+            </select>
+            <template v-if="selectedEdge">
+              <div class="edge-manager__meta">
+                <span class="edge-manager__endpoint">{{ blockLabel(selectedEdge.source_block_id) }}</span>
+                <span class="edge-manager__arrow">→</span>
+                <span class="edge-manager__endpoint">{{ blockLabel(selectedEdge.target_block_id) }}</span>
+              </div>
+              <select v-model="selectedEdgeType">
+                <option v-for="item in edgeTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
+              </select>
+              <input v-model="selectedEdgeLabel" type="text" placeholder="标签（可选）" />
+              <div class="edge-manager__actions">
+                <button class="button button--primary" type="button" :disabled="updateEdge.isPending.value" @click="updateEdge.mutate()">
+                  保存 Edge
+                </button>
+                <button class="button" type="button" :disabled="deleteEdge.isPending.value" @click="deleteEdge.mutate(selectedEdge.id)">
+                  <Trash2 :size="15" aria-hidden="true" />
+                  删除
+                </button>
+              </div>
+            </template>
+            <div v-else class="empty-state empty-state--compact">点击画布上的连线或从列表选择</div>
+          </div>
+        </section>
+
+        <section class="panel-section panel-section--collapsible">
           <button class="panel-section__header panel-section__header--button" type="button" @click="toggleLeftSection('createEdge')">
             <span>
               <ChevronDown v-if="openLeftSections.createEdge" :size="16" aria-hidden="true" />
@@ -341,27 +434,79 @@ async function refreshWorkspace() {
         :project-id="projectId"
         :graph="graph"
         :selected-block-id="workspace.selectedBlockId"
+        :selected-edge-id="selectedEdgeId"
         @select-block="workspace.selectBlock"
+        @select-edge="selectEdge"
       />
+      <section
+        v-if="isToolWindowOpen"
+        class="workspace-tool-window"
+        :class="{ 'is-collapsed': isToolWindowCollapsed }"
+      >
+        <div class="workspace-tool-window__bar">
+          <strong>Block 工具</strong>
+          <div class="workspace-tool-window__actions">
+            <button
+              class="icon-button"
+              type="button"
+              :title="isToolWindowCollapsed ? '展开工具窗口' : '折叠工具窗口'"
+              @click="isToolWindowCollapsed = !isToolWindowCollapsed"
+            >
+              <Maximize2 v-if="isToolWindowCollapsed" :size="16" aria-hidden="true" />
+              <Minimize2 v-else :size="16" aria-hidden="true" />
+            </button>
+            <button class="icon-button" type="button" title="关闭工具窗口" @click="isToolWindowOpen = false">
+              <X :size="17" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+        <div v-show="!isToolWindowCollapsed" class="workspace-tabs">
+          <button
+            class="workspace-tabs__item"
+            :class="{ 'is-active': activeWorkspacePanel === 'sidebar' }"
+            type="button"
+            @click="activeWorkspacePanel = 'sidebar'"
+          >
+            详情
+          </button>
+          <button
+            class="workspace-tabs__item"
+            :class="{ 'is-active': activeWorkspacePanel === 'editor' }"
+            type="button"
+            @click="activeWorkspacePanel = 'editor'"
+          >
+            正文
+          </button>
+          <button
+            class="workspace-tabs__item"
+            :class="{ 'is-active': activeWorkspacePanel === 'llm' }"
+            type="button"
+            @click="activeWorkspacePanel = 'llm'"
+          >
+            LLM 操作
+          </button>
+        </div>
+        <div v-show="!isToolWindowCollapsed" class="workspace-tool-window__body">
+          <BlockInspector
+            v-if="selectedBlock"
+            :project-id="projectId"
+            :block-id="selectedBlock.id"
+            :mode="activeWorkspacePanel"
+            @changed="refreshWorkspace"
+          />
+          <div v-else class="empty-state empty-state--panel">选择一个 block</div>
+        </div>
+      </section>
+      <button
+        v-else
+        class="workspace-tool-window__launcher button"
+        type="button"
+        title="打开 Block 工具"
+        @click="isToolWindowOpen = true"
+      >
+        <PanelRightOpen :size="17" aria-hidden="true" />
+        Block 工具
+      </button>
     </section>
-
-    <aside class="workspace__inspector drawer drawer--right">
-      <div class="drawer__bar">
-        <strong v-if="isRightDrawerOpen">Block 详情</strong>
-        <button class="icon-button" type="button" :title="isRightDrawerOpen ? '收起右侧菜单' : '展开右侧菜单'" @click="isRightDrawerOpen = !isRightDrawerOpen">
-          <PanelRightClose v-if="isRightDrawerOpen" :size="18" aria-hidden="true" />
-          <PanelRightOpen v-else :size="18" aria-hidden="true" />
-        </button>
-      </div>
-      <div v-show="isRightDrawerOpen" class="drawer__content">
-        <BlockInspector
-          v-if="selectedBlock"
-          :project-id="projectId"
-          :block-id="selectedBlock.id"
-          @changed="refreshWorkspace"
-        />
-        <div v-else class="empty-state empty-state--panel">选择一个 block</div>
-      </div>
-    </aside>
   </main>
 </template>

@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   CopyPlus,
+  Eye,
   FileText,
   GitFork,
   MapPin,
@@ -19,12 +20,18 @@ import {
 
 import { api } from '@/api/client'
 import RichTextEditor from '@/components/editor/RichTextEditor.vue'
-import type { CanonEntity, GenerateOnceResult, ModelProfile, Revision } from '@/api/types'
+import type { CanonEntity, ContextPreview, GenerateOnceInput, GenerateOnceResult, ModelProfile, Revision } from '@/api/types'
 
-const props = defineProps<{
+type InspectorMode = 'all' | 'sidebar' | 'editor' | 'llm'
+type InspectorSection = 'title' | 'associations' | 'editor' | 'llm' | 'fork' | 'revisions'
+
+const props = withDefaults(defineProps<{
   projectId: string
   blockId: string
-}>()
+  mode?: InspectorMode
+}>(), {
+  mode: 'all',
+})
 
 const emit = defineEmits<{
   changed: []
@@ -45,7 +52,12 @@ const selectedCharacterIds = ref<string[]>([])
 const selectedLocationId = ref('')
 const tagsDraft = ref('')
 const generationResult = ref<GenerateOnceResult | null>(null)
+const contextPreview = ref<ContextPreview | null>(null)
+const contextPreviewError = ref('')
+const excludedContextItemIds = ref<string[]>([])
+const showFinalPrompt = ref(false)
 const streamingOutput = ref('')
+const reasoningOutput = ref('')
 const generationError = ref('')
 const isGenerationStreaming = ref(false)
 const draftSavedAt = ref<string | null>(null)
@@ -54,7 +66,7 @@ const openSections = ref({
   title: true,
   associations: false,
   editor: true,
-  llm: false,
+  llm: props.mode === 'llm',
   fork: false,
   revisions: true,
 })
@@ -110,6 +122,7 @@ const currentRevisionHash = computed(() => currentRevision.value?.content_hash?.
 const selectedModelProfile = computed(
   () => modelProfiles.value.find((profile) => profile.id === selectedModelProfileId.value) ?? null,
 )
+const showInspectorHeader = computed(() => props.mode === 'all' || props.mode === 'sidebar')
 const selectedTextForGeneration = computed(() => {
   if (generationTaskType.value !== 'rewrite_selection') {
     return generationSelectedText.value.trim()
@@ -156,6 +169,21 @@ const associatedLocation = computed(
 const hasAssociations = computed(
   () => associatedCharacters.value.length > 0 || Boolean(associatedLocation.value) || savedTags.value.length > 0,
 )
+const includedContextItems = computed(() => contextPreview.value?.items.filter((item) => item.included) ?? [])
+const skippedContextItems = computed(() => contextPreview.value?.items.filter((item) => !item.included) ?? [])
+const visibleSections = computed<Set<InspectorSection>>(() => {
+  switch (props.mode) {
+    case 'sidebar':
+      return new Set(['title', 'associations', 'fork', 'revisions'])
+    case 'editor':
+      return new Set(['editor'])
+    case 'llm':
+      return new Set(['llm'])
+    case 'all':
+    default:
+      return new Set(['title', 'associations', 'editor', 'llm', 'fork', 'revisions'])
+  }
+})
 
 watch(
   [currentRevision, draftStorageKey],
@@ -220,7 +248,12 @@ watch(
   () => {
     cancelGeneration()
     generationResult.value = null
+    contextPreview.value = null
+    contextPreviewError.value = ''
+    excludedContextItemIds.value = []
+    showFinalPrompt.value = false
     streamingOutput.value = ''
+    reasoningOutput.value = ''
     generationError.value = ''
     generationSelectedText.value = ''
     editorSelectedText.value = ''
@@ -277,6 +310,7 @@ const saveGeneratedRevision = useMutation({
   onSuccess: async () => {
     generationResult.value = null
     streamingOutput.value = ''
+    reasoningOutput.value = ''
     generationError.value = ''
     generationSelectedText.value = ''
     clearLocalDraft()
@@ -320,6 +354,18 @@ const forkBlock = useMutation({
   onSuccess: async () => {
     forkTitle.value = ''
     await refreshInspector()
+  },
+})
+
+const previewGenerationContext = useMutation({
+  mutationFn: () => api.previewGenerationContext(buildGenerateInput()),
+  onSuccess: (preview) => {
+    contextPreview.value = preview
+    contextPreviewError.value = ''
+    excludedContextItemIds.value = preview.excluded_item_ids
+  },
+  onError: (error) => {
+    contextPreviewError.value = error instanceof Error ? error.message : '上下文预览失败'
   },
 })
 
@@ -545,29 +591,35 @@ async function startGenerationStream() {
   generationError.value = ''
   generationResult.value = null
   streamingOutput.value = ''
+  reasoningOutput.value = ''
 
   try {
     await api.generateStream(
-      {
-        project_id: props.projectId,
-        block_id: props.blockId,
-        task_type: generationTaskType.value,
-        model_profile_id: selectedModelProfileId.value,
-        selected_text: selectedText,
-        user_instruction: generationInstruction.value.trim(),
-      },
+      buildGenerateInput(),
       (event) => {
         if (event.type === 'delta') {
           streamingOutput.value += event.content ?? ''
           return
         }
+        if (event.type === 'reasoning') {
+          reasoningOutput.value += event.reasoning ?? ''
+          return
+        }
         if (event.type === 'done' && event.generation_run) {
           generationResult.value = {
             output_text: streamingOutput.value,
+            reasoning_text: event.reasoning ?? reasoningOutput.value,
             generation_run: event.generation_run,
             prompt: event.prompt ?? '',
+            system_prompt: event.system_prompt ?? '',
+            user_prompt: event.user_prompt ?? '',
+            context_preview: event.context_preview ?? contextPreview.value ?? emptyContextPreview(),
             model_profile_id: event.model_profile_id ?? selectedModelProfileId.value,
             prompt_template_id: event.prompt_template_id ?? null,
+          }
+          if (event.context_preview) {
+            contextPreview.value = event.context_preview
+            excludedContextItemIds.value = event.context_preview.excluded_item_ids
           }
           return
         }
@@ -586,6 +638,66 @@ async function startGenerationStream() {
   } finally {
     isGenerationStreaming.value = false
     generationAbortController = null
+  }
+}
+
+function buildGenerateInput(): GenerateOnceInput {
+  return {
+    project_id: props.projectId,
+    block_id: props.blockId,
+    task_type: generationTaskType.value,
+    model_profile_id: selectedModelProfileId.value,
+    selected_text: selectedTextForGeneration.value,
+    user_instruction: generationInstruction.value.trim(),
+    excluded_context_item_ids: excludedContextItemIds.value,
+  }
+}
+
+function toggleContextItem(itemId: string) {
+  const excluded = new Set(excludedContextItemIds.value)
+  if (excluded.has(itemId)) {
+    excluded.delete(itemId)
+  } else {
+    excluded.add(itemId)
+  }
+  excludedContextItemIds.value = Array.from(excluded)
+  if (contextPreview.value) {
+    contextPreview.value = {
+      ...contextPreview.value,
+      excluded_item_ids: excludedContextItemIds.value,
+      items: contextPreview.value.items.map((item) =>
+        item.id === itemId && !item.required ? { ...item, included: !excluded.has(item.id) } : item,
+      ),
+    }
+  }
+  if (canGenerate.value && !previewGenerationContext.isPending.value) {
+    window.setTimeout(() => previewGenerationContext.mutate(), 0)
+  }
+}
+
+function contextItemTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    current_block: '当前正文',
+    canon: '设定',
+    selected_text: '选区',
+    recent_block: '最近正文',
+    branch_summary: '分支摘要',
+    chapter_summary: '章节摘要',
+    memory_chunk: '记忆',
+  }
+  return labels[type] ?? type
+}
+
+function emptyContextPreview(): ContextPreview {
+  return {
+    system_prompt: '',
+    user_prompt: '',
+    final_prompt: '',
+    estimated_tokens: 0,
+    token_budget: 0,
+    items: [],
+    excluded_item_ids: [],
+    prompt_template_id: null,
   }
 }
 
@@ -620,7 +732,7 @@ function replaceEditorSelectionWithGeneratedContent() {
     <div v-if="blockQuery.isLoading.value" class="empty-state empty-state--panel">正在加载 block</div>
 
     <template v-else-if="blockDetail">
-      <div class="inspector__header">
+      <div v-if="showInspectorHeader" class="inspector__header">
         <div>
           <h2>{{ displayTitle }}</h2>
           <p>{{ blockDetail.block.type }} · {{ revisions.length }} revisions</p>
@@ -628,7 +740,7 @@ function replaceEditorSelectionWithGeneratedContent() {
         <SquarePen :size="18" aria-hidden="true" />
       </div>
 
-      <div class="association-overview" :class="{ 'is-empty': !hasAssociations }">
+      <div v-if="showInspectorHeader" class="association-overview" :class="{ 'is-empty': !hasAssociations }">
         <template v-if="hasAssociations">
           <span v-for="character in associatedCharacters" :key="character.id">
             {{ character.name }}
@@ -644,7 +756,7 @@ function replaceEditorSelectionWithGeneratedContent() {
         <span v-else>未关联 canon</span>
       </div>
 
-      <section class="inspector-section">
+      <section v-if="visibleSections.has('title')" class="inspector-section">
         <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('title')">
           <span>
             <ChevronDown v-if="openSections.title" :size="16" aria-hidden="true" />
@@ -662,7 +774,7 @@ function replaceEditorSelectionWithGeneratedContent() {
         </form>
       </section>
 
-      <section class="inspector-section">
+      <section v-if="visibleSections.has('associations')" class="inspector-section">
         <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('associations')">
           <span>
             <ChevronDown v-if="openSections.associations" :size="16" aria-hidden="true" />
@@ -712,7 +824,7 @@ function replaceEditorSelectionWithGeneratedContent() {
         </form>
       </section>
 
-      <section class="inspector-section">
+      <section v-if="visibleSections.has('editor')" class="inspector-section">
         <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('editor')">
           <span>
             <ChevronDown v-if="openSections.editor" :size="16" aria-hidden="true" />
@@ -749,7 +861,7 @@ function replaceEditorSelectionWithGeneratedContent() {
         </div>
       </section>
 
-      <section class="inspector-section">
+      <section v-if="visibleSections.has('llm')" class="inspector-section">
         <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('llm')">
           <span>
             <ChevronDown v-if="openSections.llm" :size="16" aria-hidden="true" />
@@ -792,13 +904,76 @@ function replaceEditorSelectionWithGeneratedContent() {
             <textarea v-model="generationInstruction" rows="3" placeholder="补充风格、方向、限制或人物语气" />
           </label>
 
+          <div class="context-preview">
+            <div class="context-preview__header">
+              <div>
+                <h3>上下文预览</h3>
+                <p v-if="contextPreview">
+                  {{ contextPreview.estimated_tokens }} / {{ contextPreview.token_budget }} tokens · {{ includedContextItems.length }} 项已包含
+                </p>
+                <p v-else>生成前可查看将发送给模型的上下文</p>
+              </div>
+              <button class="button" type="button" :disabled="!canGenerate || previewGenerationContext.isPending.value" @click="previewGenerationContext.mutate()">
+                <Eye :size="16" aria-hidden="true" />
+                预览
+              </button>
+            </div>
+
+            <div v-if="contextPreviewError" class="llm-message llm-message--error">
+              <AlertCircle :size="16" aria-hidden="true" />
+              <span>{{ contextPreviewError }}</span>
+            </div>
+
+            <div v-if="contextPreview" class="context-preview__items">
+              <label
+                v-for="item in contextPreview.items"
+                :key="item.id"
+                class="context-item"
+                :class="{ 'is-skipped': !item.included }"
+              >
+                <input
+                  type="checkbox"
+                  :checked="!excludedContextItemIds.includes(item.id)"
+                  :disabled="item.required"
+                  @change="toggleContextItem(item.id)"
+                />
+                <span>
+                  <strong>{{ item.title }}</strong>
+                  <small>{{ contextItemTypeLabel(item.type) }} · {{ item.estimated_tokens }} tokens · {{ item.included ? '包含' : '跳过' }}</small>
+                  <em>{{ item.content }}</em>
+                </span>
+              </label>
+              <div v-if="skippedContextItems.length" class="context-preview__note">
+                {{ skippedContextItems.length }} 项因预算或手动取消未进入最终 prompt。
+              </div>
+            </div>
+
+            <button v-if="contextPreview" class="button" type="button" @click="showFinalPrompt = !showFinalPrompt">
+              {{ showFinalPrompt ? '隐藏最终 Prompt' : '查看最终 Prompt' }}
+            </button>
+            <div v-if="contextPreview && showFinalPrompt" class="context-preview__prompts">
+              <div>
+                <strong>System</strong>
+                <pre>{{ contextPreview.system_prompt }}</pre>
+              </div>
+              <div>
+                <strong>User</strong>
+                <pre>{{ contextPreview.user_prompt }}</pre>
+              </div>
+              <div>
+                <strong>Final</strong>
+                <pre>{{ contextPreview.final_prompt }}</pre>
+              </div>
+            </div>
+          </div>
+
           <div v-if="!modelProfiles.length" class="llm-message llm-message--warning">
             <AlertCircle :size="16" aria-hidden="true" />
             <span>还没有模型配置，请先在模型设置中创建一个可用 profile。</span>
           </div>
           <div v-else-if="selectedModelProfile && !selectedModelProfile.has_api_key" class="llm-message llm-message--warning">
             <AlertCircle :size="16" aria-hidden="true" />
-            <span>当前模型没有 API key 环境变量引用，生成请求会失败。</span>
+            <span>当前模型没有 API key，生成请求会失败。</span>
           </div>
           <div v-if="generationError" class="llm-message llm-message--error">
             <AlertCircle :size="16" aria-hidden="true" />
@@ -815,13 +990,19 @@ function replaceEditorSelectionWithGeneratedContent() {
             </button>
           </div>
 
-          <div v-if="generationResult || streamingOutput" class="llm-output">
+          <div v-if="generationResult || streamingOutput || reasoningOutput" class="llm-output">
             <div class="llm-output__meta">
               <span>{{ generationResult?.generation_run.model ?? selectedModelProfile?.model ?? 'streaming' }}</span>
               <span v-if="generationResult">{{ generationResult.generation_run.output_tokens }} output tokens</span>
               <span v-else>streaming</span>
             </div>
-            <div class="llm-output__text">{{ generationResult?.output_text ?? streamingOutput }}</div>
+            <details v-if="generationResult?.reasoning_text || reasoningOutput" class="llm-reasoning">
+              <summary>模型推理内容</summary>
+              <div>{{ generationResult?.reasoning_text || reasoningOutput }}</div>
+            </details>
+            <div v-if="generationResult?.output_text || streamingOutput" class="llm-output__text">
+              {{ generationResult?.output_text ?? streamingOutput }}
+            </div>
             <div class="inspector__actions">
               <button class="button button--primary" type="button" :disabled="!generationResult || saveGeneratedRevision.isPending.value" @click="saveGeneratedRevision.mutate()">
                 <Check :size="16" aria-hidden="true" />
@@ -832,7 +1013,7 @@ function replaceEditorSelectionWithGeneratedContent() {
         </div>
       </section>
 
-      <section class="inspector-section">
+      <section v-if="visibleSections.has('fork')" class="inspector-section">
         <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('fork')">
           <span>
             <ChevronDown v-if="openSections.fork" :size="16" aria-hidden="true" />
@@ -850,7 +1031,7 @@ function replaceEditorSelectionWithGeneratedContent() {
         </div>
       </section>
 
-      <section class="inspector-section revision-list">
+      <section v-if="visibleSections.has('revisions')" class="inspector-section revision-list">
         <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('revisions')">
           <span>
             <ChevronDown v-if="openSections.revisions" :size="16" aria-hidden="true" />

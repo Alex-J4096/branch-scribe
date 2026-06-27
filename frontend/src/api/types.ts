@@ -173,21 +173,52 @@ export type GenerateOnceInput = {
   prompt_template_id?: string | null
   selected_text?: string
   user_instruction?: string
+  excluded_context_item_ids?: string[]
+}
+
+export type ContextItem = {
+  id: string
+  type: string
+  title: string
+  content: string
+  source_id?: string
+  estimated_tokens: number
+  included: boolean
+  required: boolean
+}
+
+export type ContextPreview = {
+  system_prompt: string
+  user_prompt: string
+  final_prompt: string
+  estimated_tokens: number
+  token_budget: number
+  items: ContextItem[]
+  excluded_item_ids: string[]
+  prompt_template_id: string | null
 }
 
 export type GenerateOnceResult = {
   output_text: string
+  reasoning_text: string
   generation_run: GenerationRun
   prompt: string
+  system_prompt: string
+  user_prompt: string
+  context_preview: ContextPreview
   model_profile_id: string
   prompt_template_id: string | null
 }
 
 export type GenerateStreamEvent = {
-  type: 'delta' | 'done' | 'error'
+  type: 'delta' | 'reasoning' | 'done' | 'error'
   content?: string
+  reasoning?: string
   generation_run?: GenerationRun
   prompt?: string
+  system_prompt?: string
+  user_prompt?: string
+  context_preview?: ContextPreview
   model_profile_id?: string
   prompt_template_id?: string | null
   error?: string

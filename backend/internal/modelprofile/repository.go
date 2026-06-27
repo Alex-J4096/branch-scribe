@@ -60,7 +60,7 @@ func (r *Repository) Create(ctx context.Context, projectID string, req CreateMod
 	if req.ContextWindow != nil {
 		contextWindow = *req.ContextWindow
 	}
-	apiKeyRef, err := normalizeAPIKeyRef(req.APIKey)
+	apiKeyRef, err := normalizeAPIKeyStorage(req.APIKey)
 	if err != nil {
 		return ModelProfile{}, err
 	}
@@ -121,7 +121,7 @@ func (r *Repository) Update(ctx context.Context, profileID string, req UpdateMod
 		setClauses = append(setClauses, fmt.Sprintf("base_url = $%d", len(args)))
 	}
 	if req.APIKey != nil {
-		apiKeyRef, err := normalizeAPIKeyRef(req.APIKey)
+		apiKeyRef, err := normalizeAPIKeyStorage(req.APIKey)
 		if err != nil {
 			return ModelProfile{}, err
 		}
@@ -187,7 +187,7 @@ const selectModelProfileSQL = `
 		provider,
 		model,
 		base_url,
-		(api_key_ref IS NOT NULL AND api_key_ref LIKE 'env:%'),
+		(api_key_ref IS NOT NULL),
 		temperature,
 		top_p,
 		max_tokens,
@@ -220,7 +220,7 @@ const insertModelProfileSQL = `
 		provider,
 		model,
 		base_url,
-		(api_key_ref IS NOT NULL AND api_key_ref LIKE 'env:%'),
+		(api_key_ref IS NOT NULL),
 		temperature,
 		top_p,
 		max_tokens,
@@ -241,7 +241,7 @@ const updateModelProfileSQL = `
 		provider,
 		model,
 		base_url,
-		(api_key_ref IS NOT NULL AND api_key_ref LIKE 'env:%%'),
+		(api_key_ref IS NOT NULL),
 		temperature,
 		top_p,
 		max_tokens,

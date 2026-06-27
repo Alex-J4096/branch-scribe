@@ -21,6 +21,7 @@ func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	router.GET("/projects/:projectId/graph", handler.Get)
 	router.POST("/projects/:projectId/graph/edges", handler.CreateEdge)
 	router.PATCH("/projects/:projectId/graph/nodes/:blockId/position", handler.UpdatePosition)
+	router.PATCH("/projects/:projectId/graph/edges/:edgeId", handler.UpdateEdge)
 	router.DELETE("/projects/:projectId/graph/edges/:edgeId", handler.DeleteEdge)
 }
 
@@ -69,6 +70,21 @@ func (h *Handler) DeleteEdge(c *gin.Context) {
 		return
 	}
 	api.RespondOK(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) UpdateEdge(c *gin.Context) {
+	var req UpdateEdgeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_GRAPH_REQUEST", "invalid graph request")
+		return
+	}
+
+	edge, err := h.repo.UpdateEdge(c.Request.Context(), c.Param("projectId"), c.Param("edgeId"), req)
+	if err != nil {
+		respondGraphError(c, err, "GRAPH_EDGE_UPDATE_FAILED", "failed to update graph edge")
+		return
+	}
+	api.RespondOK(c, edge)
 }
 
 func respondGraphError(c *gin.Context, err error, code string, message string) {

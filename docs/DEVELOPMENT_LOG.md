@@ -462,3 +462,43 @@
 - 前端 API client 新增 `searchMemoryChunks` 和 `MemorySearchInput`，后续可替换 memory 列表页的 GET 查询或扩展搜索体验。
 - 该端点不做 semantic search，不依赖 embedding provider；Phase 4 的 embedding provider、semantic search 和 reindex 仍按用户要求排除。
 - 更新 `ARCHITECTURE.md` 中 Phase 4 的“系统可以根据文本检索相关 memory chunks”验收标准。
+
+### Step 47: Phase 5 Context Builder 与上下文预览
+
+- Phase 4 的 embedding provider、semantic search 和 reindex 继续暂缓，先进入 Phase 5 核心生成链路。
+- 新增后端 Context Builder：按 task type 加载 current block、recent blocks、关联 canon、已有 branch/chapter summary 和关键词 memory chunks。
+- Context Builder 支持近似 token budget、上下文裁剪、手动排除非必需 context item，并生成 system/user/final prompt。
+- 新增 `POST /api/generate/context-preview`，前端可在生成前查看最终发送给 LLM 的上下文。
+- `generate/once` 和 `generate/stream` 复用同一个 Context Builder，并把 context snapshot 写入 `generation_runs.input_context_snapshot`。
+- Block Inspector 的 LLM 面板新增上下文预览区域，展示来源 item、预计 token、system prompt、user prompt 和 final prompt；用户可临时取消非必需 item 后再生成。
+- 默认生成模板接入 `{{recent_blocks}}`、`{{branch_summary}}`、`{{chapter_summary}}` 和 `{{memory_chunks}}`，续写会自动包含最近正文，改写和局部改写会包含原文、设定与相关记忆。
+- 运行 `go test ./...` 和 `npm run build`，均通过；Vite 仍提示 Tiptap bundle 体积警告。
+- 更新 `ARCHITECTURE.md` 中 Phase 4 暂缓项、Generation API 路由和 Phase 5 任务清单。
+
+### Step 48: API Key 配置改为直接粘贴
+
+- 修正模型配置体验：模型页面的 API key 输入框现在接受真实 provider key，保存后即可用于生成。
+- 继续保留 `env:VAR_NAME` 高级用法；生成时遇到 `env:` 前缀才从环境变量读取，否则直接使用保存的 key。
+- Model Profile API 仍不回传明文 API key，只返回 `has_api_key` 状态。
+- 移除初始化 schema 中 `api_key_ref` 只能为 `env:%` 的限制，并在后端启动时自动 drop 旧本地库中的 `model_profiles_api_key_ref_check` 约束。
+- 前端模型配置页文案从“API key 环境变量”改为“API key”，输入框改为 password 类型；工作台生成警告同步更新。
+- 更新 `.env.example` 和 `ARCHITECTURE.md` 中 API key 管理说明。
+
+### Step 49: Edge 管理、上下文与工作台布局修复
+
+- 新增 `PATCH /api/projects/:projectId/graph/edges/:edgeId`，支持修改 edge 类型、标签和 metadata；重复同类型 edge 返回 invalid graph。
+- 前端工作台新增 Edge 管理面板，支持从列表或画布选中 edge、修改类型和标签、删除 edge；选中 edge 会在画布上高亮。
+- Context Builder 的 recent block 查询同时读取 `references` / `summarizes` 的出边和入边，修复当前 block 指向前文时无法加载关联正文的问题。
+- 修复上下文预览 checkbox：切换 item 后列表保持展开，并自动刷新 final prompt，不再整块消失。
+- OpenAI-compatible provider 支持解析 `reasoning_content` 和 `reasoning` 字段；流式生成新增 reasoning 事件，前端以“模型推理内容”折叠区展示 provider 明确返回的推理文本。
+- 重构工作台布局：正文和 LLM 操作从右侧 Inspector 移到画布下方的标签工作区；右侧只保留标题、关联、Fork 和历史版本等轻量模块。
+- 运行 `go test ./...` 和 `npm run build`，均通过；Vite 仍提示 bundle 体积警告。
+- 更新 `ARCHITECTURE.md` Graph API 路由。
+
+### Step 50: 工作台工具整合为浮动窗口
+
+- 移除占用固定页面高度的下方正文 / LLM 工作区和独立右侧详情栏。
+- 将 Block 详情、正文编辑器和 LLM 操作整合为画布内浮动标签窗口，窗口内容独立滚动，不再拉长页面。
+- 浮动窗口支持折叠和关闭；关闭后可通过画布右下角的 Block 工具按钮重新打开。
+- 三个标签复用同一个 Block Inspector 实例，切换时保留正文草稿、编辑器选区和 LLM 生成状态。
+- 增加移动端尺寸约束，浮窗始终限制在画布范围内。

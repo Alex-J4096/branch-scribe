@@ -27,7 +27,7 @@ const form = reactive<ModelProfileInput>({
   provider: 'openai_compatible',
   model: '',
   base_url: '',
-  api_key: 'BRANCHSCRIBE_MODEL_API_KEY',
+  api_key: '',
   temperature: 0.8,
   top_p: 0.9,
   max_tokens: 2048,
@@ -47,6 +47,16 @@ const profilesQuery = useQuery({
 const profiles = computed(() => profilesQuery.data.value ?? [])
 const selectedProfile = computed(() => profiles.value.find((profile) => profile.id === selectedProfileId.value) ?? null)
 const providerDefaultBaseUrl = computed(() => providerBaseUrls[form.provider] ?? '')
+const apiKeyStatusLabel = computed(() => {
+  if (!selectedProfile.value) return '新建时必填'
+  return selectedProfile.value.has_api_key ? '已配置，留空则保留' : '未配置'
+})
+const apiKeyPlaceholder = computed(() => {
+  if (selectedProfile.value?.has_api_key) {
+    return '••••••••••••••••  已配置；输入新 key 可替换'
+  }
+  return '粘贴真实 API key，例如 sk-...；也可填 env:BRANCHSCRIBE_MODEL_API_KEY'
+})
 
 watch(
   profiles,
@@ -108,7 +118,7 @@ function resetForm() {
   form.provider = 'openai_compatible'
   form.model = ''
   form.base_url = ''
-  form.api_key = 'BRANCHSCRIBE_MODEL_API_KEY'
+  form.api_key = ''
   form.temperature = 0.8
   form.top_p = 0.9
   form.max_tokens = 2048
@@ -233,8 +243,9 @@ function sanitizeForm(): ModelProfileInput {
               <input v-model="form.model" type="text" placeholder="gpt-4.1-mini" />
             </label>
             <label class="settings-form__wide">
-              <span>API key 环境变量 · {{ selectedProfile?.has_api_key ? '已配置' : '未配置' }}</span>
-              <input v-model="form.api_key" type="text" placeholder="例如 BRANCHSCRIBE_MODEL_API_KEY；编辑已有配置时留空则不修改" autocomplete="off" />
+              <span>API key · {{ apiKeyStatusLabel }}</span>
+              <input v-model="form.api_key" type="password" :placeholder="apiKeyPlaceholder" autocomplete="off" />
+              <small class="settings-form__hint">支持直接粘贴 provider key；也支持 env:VAR_NAME 从后端环境变量读取。</small>
             </label>
           </div>
         </section>

@@ -22,6 +22,14 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 }
 
 func (r *Repository) GetModelProfile(ctx context.Context, projectID string, profileID string) (ModelProfile, error) {
+	return r.getModelProfile(ctx, projectID, profileID, true)
+}
+
+func (r *Repository) GetModelProfileForPreview(ctx context.Context, projectID string, profileID string) (ModelProfile, error) {
+	return r.getModelProfile(ctx, projectID, profileID, false)
+}
+
+func (r *Repository) getModelProfile(ctx context.Context, projectID string, profileID string, resolveKey bool) (ModelProfile, error) {
 	var profile ModelProfile
 	var baseURL sql.NullString
 	var apiKey sql.NullString
@@ -46,7 +54,7 @@ func (r *Repository) GetModelProfile(ctx context.Context, projectID string, prof
 	if baseURL.Valid {
 		profile.BaseURL = &baseURL.String
 	}
-	if apiKey.Valid {
+	if apiKey.Valid && resolveKey {
 		resolved, err := resolveAPIKeyRef(apiKey.String)
 		if err != nil {
 			return ModelProfile{}, err
@@ -59,8 +67,14 @@ func (r *Repository) GetModelProfile(ctx context.Context, projectID string, prof
 func resolveAPIKeyRef(ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	envName, ok := strings.CutPrefix(ref, "env:")
-	if !ok || strings.TrimSpace(envName) == "" {
-		return "", fmt.Errorf("%w: api key must be stored as env reference", ErrInvalidGenerationRequest)
+	if !ok {
+		if ref == "" {
+			return "", fmt.Errorf("%w: api key is empty", ErrInvalidGenerationRequest)
+		}
+		return ref, nil
+	}
+	if strings.TrimSpace(envName) == "" {
+		return "", fmt.Errorf("%w: api key environment variable name is empty", ErrInvalidGenerationRequest)
 	}
 	value := strings.TrimSpace(os.Getenv(envName))
 	if value == "" {
@@ -75,13 +89,14 @@ func (r *Repository) GetBlockContext(ctx context.Context, projectID string, bloc
 	var title sql.NullString
 	var content sql.NullString
 	var contentFormat sql.NullString
+	var branchID sql.NullString
 	err := r.db.QueryRow(ctx, `
-		SELECT p.description, b.title, br.content, br.content_format
+		SELECT p.description, b.title, br.content, br.content_format, b.branch_id::text, b.order_index
 		FROM blocks b
 		JOIN projects p ON p.id = b.project_id
 		LEFT JOIN block_revisions br ON br.id = b.current_revision_id
 		WHERE b.id = $1 AND b.project_id = $2
-	`, blockID, projectID).Scan(&projectDescription, &title, &content, &contentFormat)
+	`, blockID, projectID).Scan(&projectDescription, &title, &content, &contentFormat, &branchID, &blockContext.OrderIndex)
 	if err != nil {
 		return BlockContext{}, normalizeNotFound(err)
 	}
@@ -97,6 +112,9 @@ func (r *Repository) GetBlockContext(ctx context.Context, projectID string, bloc
 	if contentFormat.Valid {
 		blockContext.ContentFormat = contentFormat.String
 	}
+	if branchID.Valid {
+		blockContext.BranchID = &branchID.String
+	}
 	blockContext.CanonFacts, err = r.ListBlockCanonFacts(ctx, projectID, blockID)
 	if err != nil {
 		return BlockContext{}, err
@@ -108,12 +126,13 @@ func (r *Repository) GetBlockMetadataContext(ctx context.Context, projectID stri
 	var blockContext BlockContext
 	var projectDescription sql.NullString
 	var title sql.NullString
+	var branchID sql.NullString
 	err := r.db.QueryRow(ctx, `
-		SELECT p.description, b.title
+		SELECT p.description, b.title, b.branch_id::text, b.order_index
 		FROM blocks b
 		JOIN projects p ON p.id = b.project_id
 		WHERE b.id = $1 AND b.project_id = $2
-	`, blockID, projectID).Scan(&projectDescription, &title)
+	`, blockID, projectID).Scan(&projectDescription, &title, &branchID, &blockContext.OrderIndex)
 	if err != nil {
 		return BlockContext{}, normalizeNotFound(err)
 	}
@@ -122,6 +141,9 @@ func (r *Repository) GetBlockMetadataContext(ctx context.Context, projectID stri
 	}
 	if title.Valid {
 		blockContext.BlockTitle = &title.String
+	}
+	if branchID.Valid {
+		blockContext.BranchID = &branchID.String
 	}
 	blockContext.CanonFacts, err = r.ListBlockCanonFacts(ctx, projectID, blockID)
 	if err != nil {
@@ -193,6 +215,183 @@ func (r *Repository) ListBlockCanonFacts(ctx context.Context, projectID string, 
 		facts = append(facts, fact)
 	}
 	return facts, rows.Err()
+}
+
+func (r *Repository) ListRecentBlocks(ctx context.Context, projectID string, blockID string, limit int) ([]RecentBlockContext, error) {
+	if limit <= 0 {
+		return []RecentBlockContext{}, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		WITH current_block AS (
+			SELECT id, branch_id, order_index
+			FROM blocks
+			WHERE id = $2 AND project_id = $1
+		),
+		candidates AS (
+			SELECT b.id, b.title, br.content, br.content_format, b.order_index, 1 AS rank_group
+			FROM blocks b
+			JOIN current_block cb ON cb.branch_id IS NOT DISTINCT FROM b.branch_id
+			JOIN block_revisions br ON br.id = b.current_revision_id
+			WHERE b.project_id = $1
+				AND b.id <> $2
+				AND b.order_index < cb.order_index
+			UNION
+			SELECT b.id, b.title, br.content, br.content_format, b.order_index, 0 AS rank_group
+			FROM graph_edges ge
+			JOIN blocks b ON b.id = ge.source_block_id
+			JOIN block_revisions br ON br.id = b.current_revision_id
+			WHERE ge.project_id = $1
+				AND ge.target_block_id = $2
+				AND ge.edge_type IN ('next', 'references', 'summarizes')
+			UNION
+			SELECT b.id, b.title, br.content, br.content_format, b.order_index, 0 AS rank_group
+			FROM graph_edges ge
+			JOIN blocks b ON b.id = ge.target_block_id
+			JOIN block_revisions br ON br.id = b.current_revision_id
+			WHERE ge.project_id = $1
+				AND ge.source_block_id = $2
+				AND ge.edge_type IN ('references', 'summarizes')
+		),
+		ranked AS (
+			SELECT
+				id,
+				title,
+				content,
+				content_format,
+				order_index,
+				rank_group,
+				row_number() OVER (PARTITION BY id ORDER BY rank_group, order_index DESC) AS duplicate_rank
+			FROM candidates
+		)
+		SELECT
+			id::text,
+			title,
+			content,
+			content_format,
+			order_index
+		FROM ranked
+		WHERE duplicate_rank = 1
+		ORDER BY rank_group, order_index DESC
+		LIMIT $3
+	`, projectID, blockID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	blocks := make([]RecentBlockContext, 0)
+	for rows.Next() {
+		var block RecentBlockContext
+		var title sql.NullString
+		if err := rows.Scan(&block.ID, &title, &block.Content, &block.ContentFormat, &block.OrderIndex); err != nil {
+			return nil, err
+		}
+		if title.Valid {
+			block.Title = &title.String
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks, rows.Err()
+}
+
+func (r *Repository) ListMemoryForContext(ctx context.Context, projectID string, keywords []string, limit int) ([]MemoryContext, error) {
+	if limit <= 0 || len(keywords) == 0 {
+		return []MemoryContext{}, nil
+	}
+	patterns := make([]string, 0, len(keywords))
+	for _, keyword := range keywords {
+		keyword = strings.TrimSpace(keyword)
+		if keyword == "" {
+			continue
+		}
+		patterns = append(patterns, "%"+keyword+"%")
+	}
+	if len(patterns) == 0 {
+		return []MemoryContext{}, nil
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT
+			id::text,
+			chunk_text,
+			chunk_kind,
+			tags
+		FROM memory_chunks
+		WHERE project_id = $1
+			AND (
+				chunk_text ILIKE ANY($2::text[])
+				OR EXISTS (
+					SELECT 1
+					FROM unnest(tags) tag
+					WHERE tag ILIKE ANY($2::text[])
+				)
+			)
+		ORDER BY created_at DESC
+		LIMIT $3
+	`, projectID, patterns, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	memories := make([]MemoryContext, 0)
+	for rows.Next() {
+		var memory MemoryContext
+		if err := rows.Scan(&memory.ID, &memory.ChunkText, &memory.ChunkKind, &memory.Tags); err != nil {
+			return nil, err
+		}
+		if memory.Tags == nil {
+			memory.Tags = []string{}
+		}
+		memories = append(memories, memory)
+	}
+	return memories, rows.Err()
+}
+
+func (r *Repository) ListSummariesForContext(ctx context.Context, projectID string, blockID string, branchID *string) ([]SummaryContext, error) {
+	args := []any{projectID, blockID}
+	clauses := []string{`
+		(target_type = 'chapter' AND target_id IN (
+			SELECT candidate.id
+			FROM blocks current
+			JOIN blocks candidate ON candidate.project_id = current.project_id
+			WHERE current.id = $2
+				AND (
+					candidate.id = current.id
+					OR candidate.id = current.parent_block_id
+				)
+				AND candidate.type = 'chapter'
+		))
+	`}
+	if branchID != nil && strings.TrimSpace(*branchID) != "" {
+		args = append(args, *branchID)
+		clauses = append(clauses, fmt.Sprintf("(target_type = 'branch' AND target_id = $%d)", len(args)))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id::text, target_type, summary_text, token_count
+		FROM summary_snapshots
+		WHERE project_id = $1
+			AND status = 'valid'
+			AND (%s)
+		ORDER BY created_at DESC
+		LIMIT 4
+	`, strings.Join(clauses, " OR "))
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	summaries := make([]SummaryContext, 0)
+	for rows.Next() {
+		var summary SummaryContext
+		if err := rows.Scan(&summary.ID, &summary.TargetType, &summary.SummaryText, &summary.TokenCount); err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, rows.Err()
 }
 
 func (r *Repository) GetPromptTemplate(ctx context.Context, projectID string, templateID string) (PromptTemplate, error) {

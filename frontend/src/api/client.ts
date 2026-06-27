@@ -12,6 +12,7 @@ import type {
   PromptTemplateInput,
   CreateProjectInput,
   CreateRevisionInput,
+  ContextPreview,
   GenerateOnceInput,
   GenerateOnceResult,
   GenerateStreamEvent,
@@ -193,6 +194,23 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  updateEdge: (
+    projectId: string,
+    edgeId: string,
+    input: {
+      edge_type: GraphEdge['edge_type']
+      label?: string | null
+      metadata?: Record<string, unknown>
+    },
+  ) =>
+    request<GraphEdge>(`/projects/${projectId}/graph/edges/${edgeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  deleteEdge: (projectId: string, edgeId: string) =>
+    request<{ deleted: boolean }>(`/projects/${projectId}/graph/edges/${edgeId}`, {
+      method: 'DELETE',
+    }),
 
   listCanonEntities: (projectId: string, filter: { type?: CanonEntity['type']; status?: CanonEntity['status']; q?: string } = {}) => {
     const query = new URLSearchParams()
@@ -316,6 +334,11 @@ export const api = {
 
   generateOnce: (input: GenerateOnceInput) =>
     request<GenerateOnceResult>('/generate/once', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  previewGenerationContext: (input: GenerateOnceInput) =>
+    request<ContextPreview>('/generate/context-preview', {
       method: 'POST',
       body: JSON.stringify(input),
     }),

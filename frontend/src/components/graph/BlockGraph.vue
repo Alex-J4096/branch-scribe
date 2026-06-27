@@ -11,10 +11,12 @@ const props = defineProps<{
   projectId: string
   graph: ProjectGraph
   selectedBlockId: string | null
+  selectedEdgeId: string | null
 }>()
 
 const emit = defineEmits<{
   selectBlock: [blockId: string | null]
+  selectEdge: [edgeId: string | null]
 }>()
 
 const queryClient = useQueryClient()
@@ -37,7 +39,7 @@ watch(
 )
 
 watch(
-  () => props.graph.edges,
+  () => [props.graph.edges, props.selectedEdgeId] as const,
   () => {
     flowEdges.value = buildFlowEdges()
   },
@@ -69,7 +71,7 @@ function buildFlowEdges(): Edge[] {
     targetHandle: 'target',
     label: edge.label ?? edge.edge_type,
     animated: edge.edge_type === 'fork',
-    class: `story-edge story-edge--${edge.edge_type}`,
+    class: `story-edge story-edge--${edge.edge_type}${edge.id === props.selectedEdgeId ? ' is-selected' : ''}`,
     markerEnd: {
       type: MarkerType.ArrowClosed,
       color: edgeColor(edge.edge_type),
@@ -240,6 +242,8 @@ async function updatePosition(event: { node: Node }) {
     :is-valid-connection="isValidConnection"
     :connection-line-type="ConnectionLineType.SmoothStep"
     @node-click="({ node }) => emit('selectBlock', String(node.id))"
+    @edge-click="({ edge }) => emit('selectEdge', String(edge.id))"
+    @pane-click="emit('selectEdge', null)"
     @node-drag-stop="updatePosition"
     @connect="createDraggedEdge"
   >
