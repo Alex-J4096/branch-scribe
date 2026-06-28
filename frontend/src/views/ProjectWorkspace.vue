@@ -21,6 +21,7 @@ import {
   Settings,
   Telescope,
   Clock3,
+  Download,
   Trash2,
   X,
 } from 'lucide-vue-next'
@@ -93,8 +94,8 @@ const summariesQuery = useQuery({
 })
 
 const modelProfilesQuery = useQuery({
-  queryKey: computed(() => ['model-profiles', projectId.value]),
-  queryFn: () => api.listModelProfiles(projectId.value),
+  queryKey: ['model-profiles'],
+  queryFn: api.listModelProfiles,
 })
 
 const branches = computed(() => branchesQuery.data.value ?? [])
@@ -392,7 +393,7 @@ async function refreshWorkspace() {
         <RefreshCw :size="16" aria-hidden="true" />
         刷新
       </button>
-      <button class="button" type="button" @click="router.push({ name: 'model-profiles', params: { projectId } })">
+      <button class="button" type="button" @click="router.push({ name: 'model-profiles', query: { from: route.fullPath } })">
         <Settings :size="16" aria-hidden="true" />
         模型
       </button>
@@ -419,6 +420,10 @@ async function refreshWorkspace() {
       <button class="button" type="button" @click="router.push({ name: 'timeline-manager', params: { projectId } })">
         <Clock3 :size="16" aria-hidden="true" />
         时间线
+      </button>
+      <button class="button" type="button" @click="router.push({ name: 'transfer-manager', params: { projectId } })">
+        <Download :size="16" aria-hidden="true" />
+        导出
       </button>
     </header>
 

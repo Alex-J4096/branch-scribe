@@ -18,15 +18,15 @@ func NewHandler(repo *Repository) *Handler {
 }
 
 func RegisterRoutes(router gin.IRouter, handler *Handler) {
-	router.GET("/projects/:projectId/model-profiles", handler.List)
-	router.POST("/projects/:projectId/model-profiles", handler.Create)
+	router.GET("/model-profiles", handler.List)
+	router.POST("/model-profiles", handler.Create)
 	router.GET("/model-profiles/:profileId", handler.Get)
 	router.PATCH("/model-profiles/:profileId", handler.Update)
 	router.DELETE("/model-profiles/:profileId", handler.Delete)
 }
 
 func (h *Handler) List(c *gin.Context) {
-	profiles, err := h.repo.List(c.Request.Context(), c.Param("projectId"))
+	profiles, err := h.repo.List(c.Request.Context())
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, "MODEL_PROFILE_LIST_FAILED", "failed to list model profiles")
 		return
@@ -41,7 +41,7 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.repo.Create(c.Request.Context(), c.Param("projectId"), req)
+	profile, err := h.repo.Create(c.Request.Context(), req)
 	if err != nil {
 		respondModelProfileError(c, err, "MODEL_PROFILE_CREATE_FAILED", "failed to create model profile")
 		return

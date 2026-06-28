@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BranchScribe · LLM Debug</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9; --panel: #ffffff; --panel-2: #eef3ff; --line: #dfe3ea;
+      --text: #20242c; --muted: #6d7583; --accent: #315fd5; --green: #198754;
+      --yellow: #d28a00; --red: #c93c4b; --reasoning: #7752b3;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.65 ui-sans-serif, system-ui, sans-serif; }
+    button { color: inherit; font: inherit; }
+    header { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.94); position: sticky; top: 0; z-index: 3; backdrop-filter: blur(12px); }
+    h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+    .live { display: inline-flex; align-items: center; gap: 7px; margin-left: 12px; color: var(--muted); font-size: 12px; font-weight: 400; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--yellow); }
+    .dot.on { background: var(--green); box-shadow: 0 0 0 3px #d9f2e4; }
+    .clear { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 12px; cursor: pointer; box-shadow: 0 1px 2px rgba(30,40,60,.04); }
+    .clear:hover { border-color: #b7bfcc; background: #fafbfc; }
+    .layout { display: grid; grid-template-columns: 310px minmax(0, 1fr); min-height: calc(100vh - 62px); }
+    aside { border-right: 1px solid var(--line); padding: 16px 14px; background: #fbfcfd; }
+    .aside-title { padding: 0 10px 9px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .request { width: 100%; text-align: left; border: 1px solid transparent; background: transparent; padding: 11px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 5px; }
+    .request:hover { background: var(--panel); border-color: var(--line); }
+    .request.active { background: var(--panel-2); border-color: #b9c9f5; box-shadow: inset 3px 0 0 var(--accent); }
+    .request-top { display: flex; align-items: center; gap: 8px; }
+    .model { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+    .status { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--yellow); }
+    .status.done { background: var(--green); } .status.error { background: var(--red); }
+    .request-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
+    main { padding: 28px clamp(18px, 3vw, 46px) 60px; min-width: 0; max-width: 1280px; width: 100%; margin: 0 auto; }
+    .empty { color: var(--muted); min-height: 55vh; display: grid; place-items: center; text-align: center; }
+    .title-row { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 18px; }
+    h2 { margin: 0; font-size: 23px; line-height: 1.3; }
+    .id { color: var(--muted); font: 11px ui-monospace, monospace; word-break: break-all; }
+    .chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0 22px; }
+    .chip { border: 1px solid var(--line); background: var(--panel); padding: 3px 9px; border-radius: 999px; color: #596273; font-size: 12px; }
+    section { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; margin: 14px 0; overflow: hidden; box-shadow: 0 2px 8px rgba(30,40,60,.035); }
+    summary { list-style: none; padding: 12px 15px; cursor: pointer; font-weight: 650; display: flex; justify-content: space-between; border-bottom: 1px solid transparent; }
+    details[open] summary { border-bottom-color: var(--line); }
+    summary::-webkit-details-marker { display: none; }
+    .count { color: var(--muted); font-size: 12px; font-weight: 400; }
+    .message { padding: 16px 18px; border-bottom: 1px solid var(--line); }
+    .message:last-child { border-bottom: 0; }
+    .role { display: inline-block; color: var(--accent); background: #edf2ff; border-radius: 5px; padding: 1px 6px; text-transform: uppercase; font-size: 10px; font-weight: 800; margin-bottom: 9px; letter-spacing: .06em; }
+    .text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.8 ui-sans-serif, system-ui, sans-serif; }
+    .raw { font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; color: #414958; background: #f8f9fb; }
+    .output { padding: 18px; min-height: 72px; }
+    .reasoning summary { color: var(--reasoning); }
+    .content summary { color: var(--green); }
+    .error { color: var(--red); padding: 12px 15px; border: 1px solid #efb7bd; background: #fff2f3; border-radius: 8px; }
+    .metadata-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0; border-bottom: 1px solid var(--line); }
+    .metadata-item { padding: 13px 16px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-width: 0; }
+    .metadata-label { display: block; color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+    .metadata-value { display: block; margin-top: 3px; overflow-wrap: anywhere; }
+    @media (max-width: 760px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 230px; overflow: auto; }
+      main { padding: 17px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BranchScribe · LLM Debug <span class="live"><span id="dot" class="dot"></span><span id="connection">连接中</span></span></h1>
+    <button class="clear" id="clear">清空历史</button>
+  </header>
+  <div class="layout">
+    <aside><div class="aside-title">LLM Requests</div><div id="requests"></div></aside>
+    <main id="detail"><div class="empty">等待 LLM 请求<br>最终 messages、reasoning 和 content 会在这里出现</div></main>
+  </div>
+  <script>
+    const state = { sessions: [], selected: null };
+    const $ = (selector) => document.querySelector(selector);
+    const escapeHTML = (value = '') => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+    const time = value => value ? new Date(value).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '';
+
+    function render() {
+      $('#requests').innerHTML = state.sessions.length ? state.sessions.map(session => `
+        <button class="request ${session.request_id === state.selected ? 'active' : ''}" data-id="${escapeHTML(session.request_id)}">
+          <div class="request-top"><span class="status ${session.status}"></span><span class="model">${escapeHTML(session.model || '等待请求信息')}</span></div>
+          <div class="request-meta">${time(session.timestamp)} · ${session.messages?.length || 0} messages · ${session.status}</div>
+        </button>`).join('') : '<div class="empty">暂无请求</div>';
+      document.querySelectorAll('.request').forEach(button => button.onclick = () => { state.selected = button.dataset.id; render(); });
+      const session = state.sessions.find(item => item.request_id === state.selected);
+      if (!session) {
+        $('#detail').innerHTML = '<div class="empty">等待 LLM 请求<br>最终 messages、reasoning 和 content 会在这里出现</div>';
+        return;
+      }
+      const messages = (session.messages || []).map(message => `
+        <div class="message"><div class="role">${escapeHTML(message.role)}</div><pre class="text">${escapeHTML(message.content)}</pre></div>`).join('');
+      $('#detail').innerHTML = `
+        <div class="title-row"><div><h2>调用详情 · ${escapeHTML(session.model)}</h2><div class="id">${escapeHTML(session.request_id)}</div></div><span class="chip">${escapeHTML(session.status)}</span></div>
+        <div class="chips">
+          <span class="chip">${escapeHTML(session.provider || 'provider')}</span><span class="chip">temperature ${session.temperature}</span>
+          <span class="chip">top_p ${session.top_p}</span><span class="chip">max_tokens ${session.max_tokens}</span>
+          <span class="chip">tokens ${session.input_tokens || 0} → ${session.output_tokens || 0}</span>
+        </div>
+        ${session.error ? `<div class="error">${escapeHTML(session.error)}</div>` : ''}
+        <section><details open><summary>Messages <span class="count">${session.messages?.length || 0} 条</span></summary>${messages || '<div class="output">等待 messages</div>'}</details></section>
+        <section class="reasoning"><details ${session.reasoning ? 'open' : ''}><summary>Reasoning <span class="count">${session.reasoning?.length || 0} 字符</span></summary><pre class="text output">${escapeHTML(session.reasoning || '暂无 reasoning')}</pre></details></section>
+        <section class="content"><details open><summary>Content <span class="count">${session.content?.length || 0} 字符</span></summary><pre class="text output">${escapeHTML(session.content || '等待模型返回')}</pre></details></section>
+        <section class="metadata"><details><summary>Metadata <span class="count">完整请求元数据与原始 JSON</span></summary>
+          <div class="metadata-grid">
+            <div class="metadata-item"><span class="metadata-label">Request ID</span><span class="metadata-value">${escapeHTML(session.request_id)}</span></div>
+            <div class="metadata-item"><span class="metadata-label">Timestamp</span><span class="metadata-value">${escapeHTML(session.timestamp)}</span></div>
+            <div class="metadata-item"><span class="metadata-label">Base URL</span><span class="metadata-value">${escapeHTML(session.base_url || '—')}</span></div>
+            <div class="metadata-item"><span class="metadata-label">Stream</span><span class="metadata-value">${session.stream ? 'true' : 'false'}</span></div>
+          </div>
+          <pre class="text raw output">${escapeHTML(JSON.stringify(session, null, 2))}</pre>
+        </details></section>`;
+    }
+
+    function applyEvent(event) {
+      if (event.type === 'clear') { state.sessions = []; state.selected = null; render(); return; }
+      let session = state.sessions.find(item => item.request_id === event.request_id);
+      if (!session) {
+        session = { request_id: event.request_id, timestamp: event.timestamp, messages: [], content: '', reasoning: '', status: 'running' };
+        state.sessions.unshift(session);
+      }
+      if (event.type === 'request') Object.assign(session, event, { status: 'running' });
+      if (event.type === 'delta') session.content += event.content || '';
+      if (event.type === 'reasoning') session.reasoning += event.reasoning || '';
+      if (event.type === 'response') Object.assign(session, { content: event.content || '', reasoning: event.reasoning || '', input_tokens: event.input_tokens, output_tokens: event.output_tokens, status: 'done' });
+      if (event.type === 'done') Object.assign(session, { input_tokens: event.input_tokens, output_tokens: event.output_tokens, status: 'done' });
+      if (event.type === 'error') Object.assign(session, { error: event.error, status: 'error' });
+      if (!state.selected) state.selected = event.request_id;
+      render();
+    }
+
+    async function load() {
+      state.sessions = await fetch('/api/sessions').then(response => response.json());
+      state.selected = state.sessions[0]?.request_id || null;
+      render();
+    }
+    function connect() {
+      const stream = new EventSource('/api/stream');
+      stream.onopen = () => { $('#dot').classList.add('on'); $('#connection').textContent = '实时连接'; };
+      stream.onmessage = message => applyEvent(JSON.parse(message.data));
+      stream.onerror = () => { $('#dot').classList.remove('on'); $('#connection').textContent = '正在重连'; };
+    }
+    $('#clear').onclick = async () => { await fetch('/api/sessions', { method: 'DELETE' }); };
+    load().then(connect);
+  </script>
+</body>
+</html>

@@ -23,6 +23,7 @@ import (
 	"branchscribe/backend/internal/project"
 	"branchscribe/backend/internal/prompttemplate"
 	"branchscribe/backend/internal/story"
+	"branchscribe/backend/internal/transfer"
 )
 
 func main() {
@@ -47,10 +48,16 @@ func main() {
 	graph.RegisterRoutes(apiGroup, graph.NewHandler(graph.NewRepository(db)))
 	modelprofile.RegisterRoutes(apiGroup, modelprofile.NewHandler(modelprofile.NewRepository(db)))
 	prompttemplate.RegisterRoutes(apiGroup, prompttemplate.NewHandler(prompttemplate.NewRepository(db)))
-	generation.RegisterRoutes(apiGroup, generation.NewHandler(generation.NewRepository(db), generation.NewOpenAICompatibleProvider()))
+	var generationProvider generation.Provider = generation.NewOpenAICompatibleProvider()
+	if debugURL := os.Getenv("LLM_DEBUG_URL"); debugURL != "" {
+		slog.Info("enabling LLM debug event reporting", "url", debugURL)
+		generationProvider = generation.NewDebugProvider(generationProvider, generation.NewHTTPDebugSink(debugURL))
+	}
+	generation.RegisterRoutes(apiGroup, generation.NewHandler(generation.NewRepository(db), generationProvider))
 	canon.RegisterRoutes(apiGroup, canon.NewHandler(canon.NewRepository(db)))
 	memory.RegisterRoutes(apiGroup, memory.NewHandler(memory.NewRepository(db), memory.NewOpenAICompatibleEmbeddingProvider()))
 	story.RegisterRoutes(apiGroup, story.NewHandler(story.NewRepository(db)))
+	transfer.RegisterRoutes(apiGroup, transfer.NewHandler(transfer.NewRepository(db)))
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,

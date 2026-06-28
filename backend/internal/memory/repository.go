@@ -216,7 +216,7 @@ func (r *Repository) Delete(ctx context.Context, chunkID string) error {
 	return nil
 }
 
-func (r *Repository) GetEmbeddingProfile(ctx context.Context, projectID string, profileID string) (EmbeddingProfile, error) {
+func (r *Repository) GetEmbeddingProfile(ctx context.Context, _ string, profileID string) (EmbeddingProfile, error) {
 	var profile EmbeddingProfile
 	var baseURL sql.NullString
 	var apiKeyRef sql.NullString
@@ -224,7 +224,7 @@ func (r *Repository) GetEmbeddingProfile(ctx context.Context, projectID string, 
 		WITH requested AS (
 			SELECT *
 			FROM model_profiles
-			WHERE id = $1 AND project_id = $2
+			WHERE id = $1
 		),
 		selected AS (
 			SELECT embedding.*
@@ -234,11 +234,11 @@ func (r *Repository) GetEmbeddingProfile(ctx context.Context, projectID string, 
 					WHEN requested.profile_type = 'embedding' THEN requested.id
 					ELSE requested.embedding_profile_id
 				END
-			WHERE embedding.project_id = $2 AND embedding.profile_type = 'embedding'
+			WHERE embedding.profile_type = 'embedding'
 		)
 		SELECT id::text, provider, base_url, api_key_ref, model, COALESCE(embedding_dimensions, 0)
 		FROM selected
-	`, profileID, projectID).Scan(&profile.ID, &profile.Provider, &baseURL, &apiKeyRef, &profile.Model, &profile.Dimensions)
+	`, profileID).Scan(&profile.ID, &profile.Provider, &baseURL, &apiKeyRef, &profile.Model, &profile.Dimensions)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return EmbeddingProfile{}, ErrEmbeddingNotConfigured

@@ -11,7 +11,6 @@ const route = useRoute()
 const router = useRouter()
 const queryClient = useQueryClient()
 
-const projectId = computed(() => String(route.params.projectId))
 const selectedProfileId = ref<string | null>(null)
 const profileType = ref<ModelProfile['profile_type']>('llm')
 const embeddingDimensions = ref<number | null>(null)
@@ -37,14 +36,9 @@ const form = reactive<ModelProfileInput>({
   context_window: 32768,
 })
 
-const projectQuery = useQuery({
-  queryKey: computed(() => ['project', projectId.value]),
-  queryFn: () => api.getProject(projectId.value),
-})
-
 const profilesQuery = useQuery({
-  queryKey: computed(() => ['model-profiles', projectId.value]),
-  queryFn: () => api.listModelProfiles(projectId.value),
+  queryKey: ['model-profiles'],
+  queryFn: api.listModelProfiles,
 })
 
 const profiles = computed(() => profilesQuery.data.value ?? [])
@@ -74,11 +68,11 @@ watch(
 )
 
 const createProfile = useMutation({
-  mutationFn: () => api.createModelProfile(projectId.value, sanitizeForm()),
+  mutationFn: () => api.createModelProfile(sanitizeForm()),
   onSuccess: async (profile) => {
     selectedProfileId.value = profile.id
     form.api_key = ''
-    await queryClient.invalidateQueries({ queryKey: ['model-profiles', projectId.value] })
+    await queryClient.invalidateQueries({ queryKey: ['model-profiles'] })
   },
 })
 
@@ -89,7 +83,7 @@ const updateProfile = useMutation({
   },
   onSuccess: async () => {
     form.api_key = ''
-    await queryClient.invalidateQueries({ queryKey: ['model-profiles', projectId.value] })
+    await queryClient.invalidateQueries({ queryKey: ['model-profiles'] })
   },
 })
 
@@ -100,7 +94,7 @@ const deleteProfile = useMutation({
       selectedProfileId.value = null
       resetForm()
     }
-    await queryClient.invalidateQueries({ queryKey: ['model-profiles', projectId.value] })
+    await queryClient.invalidateQueries({ queryKey: ['model-profiles'] })
   },
 })
 
@@ -175,17 +169,22 @@ function sanitizeForm(): ModelProfileInput {
     metadata: selectedProfile.value?.metadata ?? {},
   }
 }
+
+function goBack() {
+  const from = typeof route.query.from === 'string' ? route.query.from : '/'
+  void router.push(from)
+}
 </script>
 
 <template>
   <main class="settings-page">
     <header class="workspace__topbar">
-      <button class="icon-button" type="button" title="返回工作台" @click="router.push({ name: 'workspace', params: { projectId } })">
+      <button class="icon-button" type="button" title="返回" @click="goBack">
         <ArrowLeft :size="18" aria-hidden="true" />
       </button>
       <div class="workspace__title">
-        <strong>{{ projectQuery.data.value?.name ?? 'BranchScribe' }}</strong>
-        <span>模型配置</span>
+        <strong>BranchScribe</strong>
+        <span>全局模型配置 · 所有项目共享</span>
       </div>
       <button class="button" type="button" @click="resetForm('llm')">
         <Plus :size="16" aria-hidden="true" />

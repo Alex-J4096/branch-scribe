@@ -122,7 +122,7 @@ Frontend: Vue 3
   ├── Block Editor: Tiptap
   ├── Revision Diff Viewer
   ├── Context Preview Panel
-  ├── Model Config Panel
+  ├── Global Model Config
   └── Canon / Memory Manager
 
 Backend: Go API
@@ -166,7 +166,7 @@ Project 表示一部小说或一个写作项目。
 * 简介
 * 默认语言
 * 默认风格
-* 默认模型配置
+* 从全局模型配置中选择的默认模型
 * 全局写作规则
 * 全局世界观设定
 
@@ -414,7 +414,6 @@ CREATE TABLE summary_snapshots (
 ```sql
 CREATE TABLE model_profiles (
     id UUID PRIMARY KEY,
-    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -1059,7 +1058,17 @@ PATCH  /api/canon/:entityId
 DELETE /api/canon/:entityId
 ```
 
-### 12.7 Prompt Template API
+### 12.7 全局 Model Profile API
+
+```http
+GET    /api/model-profiles
+POST   /api/model-profiles
+GET    /api/model-profiles/:profileId
+PATCH  /api/model-profiles/:profileId
+DELETE /api/model-profiles/:profileId
+```
+
+### 12.8 Prompt Template API
 
 ```http
 GET    /api/projects/:projectId/prompt-templates
@@ -1069,7 +1078,7 @@ PATCH  /api/prompt-templates/:templateId
 DELETE /api/prompt-templates/:templateId
 ```
 
-### 12.8 Memory API
+### 12.9 Memory API
 
 ```http
 GET    /api/projects/:projectId/memory
@@ -1435,12 +1444,14 @@ branchscribe/
 ### 数据库任务
 
 * [x] 创建 model_profiles 表。
+* [x] 将 model_profiles 调整为所有项目共享的全局配置。
 * [x] 创建 prompt_templates 表。
 * [x] 创建 generation_runs 表。
 
 ### 后端任务
 
 * [x] 实现 Model Profile CRUD。
+* [x] Model Profile CRUD 使用全局 API，不再按 project_id 隔离。
 * [x] 实现 Prompt Template CRUD。
 * [x] 实现 OpenAI-compatible Provider。
 * [x] 实现 GenerateOnce。
@@ -1459,6 +1470,7 @@ branchscribe/
 ### 前端任务
 
 * [x] 实现模型配置页面。
+* [x] 将模型配置页移到全局设置，并让所有项目复用同一组 profiles。
 * [x] 支持配置 provider、base_url、api_key、model。
 * [x] 支持配置 temperature。
 * [x] 支持配置 top_p。
@@ -1476,6 +1488,21 @@ branchscribe/
 * [x] MVP 阶段支持在模型配置中保存 API key，且不写入 generation_runs 或日志；也支持 `env:VAR_NAME` 引用。
 * [x] 对 LLM 请求做超时控制。
 * [x] 对服务商 API 错误做清晰提示。
+
+### 独立开发者调试工具
+
+目标：提供一个独立于前后端进程的调试服务，用于观察后端实际发给 LLM 的最终请求与返回，不记录 API key。
+
+* [x] 新增可独立启动的 LLM 调试 CLI，并提供监听地址配置。
+* [x] 后端 Provider 增加可选调试事件上报，打印组装完成的 `messages` 块及模型参数。
+* [x] 流式请求逐块打印 reasoning、正文、用量、完成与错误事件；非流式请求打印完整返回。
+* [x] 调试工具未启动或不可达时不影响正常 LLM 请求。
+* [x] 添加调试事件上报与流式透传测试，并补充启动说明。
+* [x] 为调试工具增加独立 Web 界面，按请求组织模型参数、messages、reasoning 与 content。
+* [x] Web 界面支持流式更新、请求切换、内容折叠与历史清空。
+* [x] 保留终端概要日志，并补充 Web 调试界面测试与启动说明。
+* [x] 将调试界面调整为明亮主题与更直观的信息层级。
+* [x] 同时提供易读的渲染视图和完整 Metadata / 原始 JSON 查看。
 
 ### 验收标准
 
@@ -1720,28 +1747,26 @@ branchscribe/
 
 ### 后端任务
 
-* [ ] 实现 Markdown 导出。
-* [ ] 实现按 branch 导出。
-* [ ] 实现按 chapter 导出。
-* [ ] 实现项目 JSON 备份。
-* [ ] 实现项目 JSON 导入。
-* [ ] DOCX 导出可放后续。
-* [ ] EPUB 导出可放后续。
+* [x] 实现 Markdown 导出。
+* [x] 实现按 branch 导出。
+* [x] 实现按 chapter 导出。
+* [x] 实现项目 JSON 备份。
+* [x] 实现项目 JSON 导入。
 
 ### 前端任务
 
-* [ ] 添加导出按钮。
-* [ ] 支持选择导出 branch。
-* [ ] 支持选择导出格式。
-* [ ] 支持项目备份下载。
-* [ ] 支持项目导入。
+* [x] 添加导出按钮。
+* [x] 支持选择导出 branch。
+* [x] 支持选择导出格式。
+* [x] 支持项目备份下载。
+* [x] 支持项目导入。
 
 ### 验收标准
 
-* [ ] 用户可以导出某条 branch 的完整正文。
-* [ ] 用户可以导出 Markdown。
-* [ ] 用户可以备份整个项目。
-* [ ] 用户可以从备份恢复项目。
+* [x] 用户可以导出某条 branch 的完整正文。
+* [x] 用户可以导出 Markdown。
+* [x] 用户可以备份整个项目。
+* [x] 用户可以从备份恢复项目。
 
 ---
 

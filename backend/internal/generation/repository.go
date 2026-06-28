@@ -241,15 +241,15 @@ func (r *Repository) GetModelProfileForPreview(ctx context.Context, projectID st
 	return r.getModelProfile(ctx, projectID, profileID, false)
 }
 
-func (r *Repository) getModelProfile(ctx context.Context, projectID string, profileID string, resolveKey bool) (ModelProfile, error) {
+func (r *Repository) getModelProfile(ctx context.Context, _ string, profileID string, resolveKey bool) (ModelProfile, error) {
 	var profile ModelProfile
 	var baseURL sql.NullString
 	var apiKey sql.NullString
 	err := r.db.QueryRow(ctx, `
 		SELECT id::text, provider, model, base_url, api_key_ref, temperature, top_p, max_tokens, context_window
 		FROM model_profiles
-		WHERE id = $1 AND project_id = $2 AND profile_type = 'llm'
-	`, profileID, projectID).Scan(
+		WHERE id = $1 AND profile_type = 'llm'
+	`, profileID).Scan(
 		&profile.ID,
 		&profile.Provider,
 		&profile.Model,

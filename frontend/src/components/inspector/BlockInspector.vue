@@ -74,6 +74,8 @@ const editingMessageId = ref('')
 const editingMessageContent = ref('')
 const savingMessageRevisionId = ref('')
 const regeneratingMessageId = ref('')
+const copiedMessageKey = ref('')
+let copiedMessageTimer: number | undefined
 const temperatureOverride = ref(1)
 const topPOverride = ref(1)
 const maxTokensOverride = ref(4096)
@@ -128,8 +130,8 @@ const revisionsQuery = useQuery({
 })
 
 const modelProfilesQuery = useQuery({
-  queryKey: computed(() => ['model-profiles', props.projectId]),
-  queryFn: () => api.listModelProfiles(props.projectId),
+  queryKey: ['model-profiles'],
+  queryFn: api.listModelProfiles,
 })
 
 const promptTemplatesQuery = useQuery({
@@ -741,6 +743,9 @@ onBeforeUnmount(() => {
   if (autosaveTimer) {
     window.clearTimeout(autosaveTimer)
   }
+  if (copiedMessageTimer) {
+    window.clearTimeout(copiedMessageTimer)
+  }
   cancelGeneration()
 })
 
@@ -1072,8 +1077,13 @@ function removeEditedPromptOperation() {
   if (operation) deletePromptOperation.mutate(operation)
 }
 
-async function copyMessage(content: string) {
+async function copyMessage(content: string, messageKey: string) {
   await navigator.clipboard.writeText(content)
+  copiedMessageKey.value = messageKey
+  if (copiedMessageTimer) window.clearTimeout(copiedMessageTimer)
+  copiedMessageTimer = window.setTimeout(() => {
+    copiedMessageKey.value = ''
+  }, 1600)
 }
 
 async function saveAssistantMessageAsRevision(message: LLMConversationMessage) {
@@ -1508,13 +1518,21 @@ function replaceEditorSelectionWithGeneratedContent() {
                   {{ regeneratingMessageId === message.id ? (streamingOutput || '正在重新生成…') : message.content }}
                 </div>
                 <div class="chat-message__actions">
-                  <button class="chat-message__action" type="button" title="复制消息" @click="copyMessage(message.content)">
-                    <Copy :size="14" aria-hidden="true" />
+                  <button
+                    class="chat-message__action"
+                    type="button"
+                    :aria-label="copiedMessageKey === message.id ? '已复制' : '复制消息'"
+                    :data-tooltip="copiedMessageKey === message.id ? '已复制' : '复制消息'"
+                    @click="copyMessage(message.content, message.id)"
+                  >
+                    <Check v-if="copiedMessageKey === message.id" :size="14" aria-hidden="true" />
+                    <Copy v-else :size="14" aria-hidden="true" />
                   </button>
                   <button
                     class="chat-message__action"
                     type="button"
-                    title="编辑消息"
+                    aria-label="编辑消息"
+                    data-tooltip="编辑消息"
                     @click="beginEditMessage(message)"
                   >
                     <Pencil :size="14" aria-hidden="true" />
@@ -1522,7 +1540,8 @@ function replaceEditorSelectionWithGeneratedContent() {
                   <button
                     class="chat-message__action"
                     type="button"
-                    title="重新生成"
+                    aria-label="重新生成"
+                    data-tooltip="重新生成"
                     :disabled="isGenerationStreaming || generateCandidates.isPending.value"
                     @click="regenerateMessage(message)"
                   >
@@ -1532,7 +1551,8 @@ function replaceEditorSelectionWithGeneratedContent() {
                     v-if="message.role === 'assistant'"
                     class="chat-message__action"
                     type="button"
-                    title="保存为 Revision"
+                    aria-label="保存为 Revision"
+                    data-tooltip="保存为 Revision"
                     :disabled="savingMessageRevisionId === message.id"
                     @click="saveAssistantMessageAsRevision(message)"
                   >
@@ -1553,14 +1573,22 @@ function replaceEditorSelectionWithGeneratedContent() {
               <div class="chat-message__role">Agent{{ selectedModelProfile?.model ? ` · ${selectedModelProfile.model}` : '' }}</div>
               <div class="chat-message__content">{{ streamingOutput || '正在思考…' }}</div>
               <div v-if="streamingOutput" class="chat-message__actions">
-                <button class="chat-message__action" type="button" title="复制消息" @click="copyMessage(streamingOutput)">
-                  <Copy :size="14" aria-hidden="true" />
+                <button
+                  class="chat-message__action"
+                  type="button"
+                  :aria-label="copiedMessageKey === 'streaming' ? '已复制' : '复制消息'"
+                  :data-tooltip="copiedMessageKey === 'streaming' ? '已复制' : '复制消息'"
+                  @click="copyMessage(streamingOutput, 'streaming')"
+                >
+                  <Check v-if="copiedMessageKey === 'streaming'" :size="14" aria-hidden="true" />
+                  <Copy v-else :size="14" aria-hidden="true" />
                 </button>
                 <button
                   v-if="generationResult"
                   class="chat-message__action"
                   type="button"
-                  title="保存为 Revision"
+                  aria-label="保存为 Revision"
+                  data-tooltip="保存为 Revision"
                   :disabled="saveGeneratedRevision.isPending.value"
                   @click="saveGeneratedRevision.mutate()"
                 >

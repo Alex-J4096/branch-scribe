@@ -224,7 +224,6 @@ export type MemoryChunk = {
 
 export type ModelProfile = {
   id: string
-  project_id: string | null
   name: string
   provider: 'openai_compatible' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'deepseek' | 'moonshot' | 'siliconflow'
   model: string

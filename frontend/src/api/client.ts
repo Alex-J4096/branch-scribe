@@ -91,6 +91,20 @@ function parseEnvelope<T>(text: string): ApiEnvelope<T> | ApiErrorEnvelope | nul
   }
 }
 
+async function download(path: string): Promise<Blob> {
+  const response = await fetch(`${apiBaseUrl}${path}`)
+  if (!response.ok) {
+    const responseText = await response.text()
+    const envelope = parseEnvelope<never>(responseText)
+    const error = envelope?.error ?? {
+      code: 'HTTP_ERROR',
+      message: responseText.trim() || `Request failed with status ${response.status}`,
+    }
+    throw new ApiClientError(response.status, error.code, error.message)
+  }
+  return response.blob()
+}
+
 async function generateStream(
   input: GenerateOnceInput,
   onEvent: (event: GenerateStreamEvent) => void,
@@ -186,6 +200,18 @@ export const api = {
   deleteProject: (projectId: string) =>
     request<{ deleted: boolean }>(`/projects/${projectId}`, {
       method: 'DELETE',
+    }),
+  downloadMarkdownExport: (projectId: string, scope: { branchId?: string; chapterId?: string }) => {
+    const query = new URLSearchParams()
+    if (scope.branchId) query.set('branch_id', scope.branchId)
+    if (scope.chapterId) query.set('chapter_id', scope.chapterId)
+    return download(`/projects/${projectId}/export/markdown?${query.toString()}`)
+  },
+  downloadProjectBackup: (projectId: string) => download(`/projects/${projectId}/backup`),
+  importProjectBackup: (backup: unknown) =>
+    request<{ project_id: string }>('/projects/import', {
+      method: 'POST',
+      body: JSON.stringify(backup),
     }),
 
   listBranches: (projectId: string) => request<Branch[]>(`/projects/${projectId}/branches`),
@@ -444,9 +470,9 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
-  listModelProfiles: (projectId: string) => request<ModelProfile[]>(`/projects/${projectId}/model-profiles`),
-  createModelProfile: (projectId: string, input: ModelProfileInput) =>
-    request<ModelProfile>(`/projects/${projectId}/model-profiles`, {
+  listModelProfiles: () => request<ModelProfile[]>('/model-profiles'),
+  createModelProfile: (input: ModelProfileInput) =>
+    request<ModelProfile>('/model-profiles', {
       method: 'POST',
       body: JSON.stringify(input),
     }),

@@ -730,3 +730,69 @@
 - 工作台新增伏笔与时间线入口。
 - 运行前端类型检查与生产构建并通过。
 - 更新 `ARCHITECTURE.md`，完成 Phase 8 全部前端任务与验收标准。
+
+### Step 77: 启动 Phase 9 导出与备份后端
+
+- 新增 Markdown 导出接口，支持按 Branch 导出包含祖先分支正文的完整故事线，或按 Chapter 导出至下一个章节节点之前的正文。
+- HTML Revision 在导出时转换为可脱离编辑器阅读的 Markdown 文本，并提供安全的下载文件名。
+- 新增项目 JSON 备份接口，覆盖项目、分支、Block、Revision、图、Canon、Memory、摘要、小说工程记录、模型配置、Prompt、Generation Run 与 LLM 对话。
+- 备份明确排除模型 API key 和向量 embedding，避免敏感凭据外泄并保持文件可移植。
+- 新增事务化 JSON 导入接口，分阶段恢复循环外键；目标 Project UUID 已存在时返回冲突，不覆盖现有项目。
+- 增加 Markdown 生成及文件名清理测试。
+- 运行后端全量测试并通过；连接真实本地 PostgreSQL 完成临时项目的备份、删除、恢复、清理闭环，并验证现有 Branch 可成功导出 Markdown。
+- 更新 `ARCHITECTURE.md`，完成 Phase 9 的 Markdown、Branch、Chapter 导出及 JSON 备份导入后端任务。
+
+### Step 78: 完成 Phase 9 导出与备份前端
+
+- 工作台新增“导出”入口和独立导出与备份页面。
+- 正文导出支持在 Branch 与 Chapter 范围间切换；格式选择保留为 Markdown，并在项目不存在 Chapter 时提供明确空状态和禁用反馈。
+- 支持直接下载项目 JSON 备份，并在页面说明 API Key 与 embedding 不会进入备份。
+- 导出页支持选择 JSON 文件恢复项目；项目列表也提供导入入口，确保没有现存项目时仍可从备份恢复。
+- 导入前先在浏览器解析并校验 JSON，恢复成功后自动打开对应项目；同 UUID 项目仍存在时显示后端冲突提示。
+- 运行前端类型检查和生产构建并通过。
+- 使用本地真实前后端在浏览器验证工作台入口、Branch Markdown 导出、Chapter 空状态、JSON 备份下载及项目列表导入入口，页面控制台无错误。
+- 更新 `ARCHITECTURE.md`，完成 Phase 9 全部前端任务与验收标准。
+
+## 2026-06-29
+
+### Step 79: 将模型配置改为全局设置
+
+- 移除 `model_profiles.project_id`，新增兼容既有数据库的迁移脚本，已有模型配置会保留并转为全局共享。
+- Model Profile 列表与创建 API 改为全局 `/api/model-profiles`，生成、上下文预览和 Embedding 链路不再按项目限制 profile。
+- 模型配置页迁移到 `/settings/model-profiles`，项目列表增加“全局模型”入口；各项目工作台、角色、时间线和记忆功能统一读取全局 profiles。
+- 保留项目对全局 profile 的默认选择和每次生成时的 profile 选择能力；项目备份不再携带或恢复全局模型及凭据。
+- 修复全局化兼容迁移在第二次启动时仍引用已删除 `project_id` 的问题，并连续启动两次后端验证迁移幂等。
+
+### Step 80: 新增独立 LLM 调试 CLI
+
+- 按开发流程先在 `ARCHITECTURE.md` 的 Phase 3 登记本轮目标与任务，再开始代码实现。
+- 新增 `backend/cmd/llm-debug` 独立命令，默认监听 `127.0.0.1:6069`，也可通过 `-addr` 修改地址。
+- 新增 Provider 调试装饰器；设置 `LLM_DEBUG_URL` 后，后端会上报每次文本生成实际使用的 provider、model、生成参数与最终 `messages`。
+- 流式调用逐块上报 reasoning、正文 delta、完成、用量和错误；非流式调用上报完整 reasoning、正文与用量。
+- 调试事件不包含 API key，并通过有界异步队列尽力投递；监听器未启动、不可达或消费过慢时不会阻塞正常生成。
+- README 补充调试 CLI 与后端联动的启动方式。
+- 新增单元测试，覆盖最终 messages 上报、非流式响应、流式事件透传和错误上报。
+- 运行 `go test ./...`，后端全部测试通过。
+- 启动真实调试 CLI 并发送冒烟事件，确认最终 messages、reasoning、流式正文和 token 用量均按预期打印。
+- 完成后勾选 `ARCHITECTURE.md` 中本轮全部任务。
+
+### Step 81: 为 LLM 调试工具增加 Web 界面
+
+- 将独立调试进程升级为内嵌 Web UI 的调试服务，仍保持单个 Go 命令启动，不依赖主前端构建或运行。
+- 新增请求列表与详情两栏布局，按请求集中展示模型参数、最终 messages、reasoning、content、状态和 token 用量。
+- 通过 SSE 将调试事件实时推送给页面，reasoning 与 content 随模型返回逐块更新。
+- messages 按 role 分段展示，messages、reasoning 和 content 均支持折叠，页面支持请求切换与清空最近历史。
+- 服务端内存保留最近 100 次请求；终端改为仅打印请求开始、完成和错误概要，避免长文本字墙。
+- `start.sh debug` 直接启动调试 Web UI，README 补充浏览器访问地址。
+- 新增调试会话聚合与历史清空测试，运行 `go test ./...` 全部通过。
+- 使用真实浏览器验证两栏布局、长文本阅读、折叠展示与清空历史，页面控制台无错误。
+- 完成后勾选 `ARCHITECTURE.md` 中本轮全部任务。
+
+### Step 82: 优化 LLM 调试界面的阅读体验
+
+- 将调试界面从暗色终端风格调整为明亮主题，重新梳理请求列表、调用标题、状态、参数和正文卡片的视觉层级。
+- messages 改为按角色标签和自然文本排版，reasoning 与 content 保留独立阅读区域和换行结构。
+- 新增 Metadata 折叠区，先展示 Request ID、时间、Base URL、流式状态等关键字段，再提供包含 messages、输出、状态和 token 数据的完整原始会话 JSON。
+- 使用真实浏览器验证明亮主题、内容渲染与 Metadata 展开，页面控制台无错误。
+- 运行 `go test ./...`，后端全部测试通过。
+- 完成后勾选 `ARCHITECTURE.md` 中本轮任务。

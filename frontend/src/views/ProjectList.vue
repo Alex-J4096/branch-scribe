@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { BookOpen, Database, Plus, Trash2, X } from 'lucide-vue-next'
+import { BookOpen, Database, Plus, Settings, Trash2, Upload, X } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
 import { api } from '@/api/client'
@@ -11,6 +11,8 @@ const queryClient = useQueryClient()
 const name = ref('')
 const description = ref('')
 const isCreateDialogOpen = ref(false)
+const importMessage = ref('')
+const importInput = ref<HTMLInputElement | null>(null)
 
 const projectsQuery = useQuery({
   queryKey: ['projects'],
@@ -35,6 +37,26 @@ const deleteProject = useMutation({
   onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects'] }),
 })
 
+const importProject = useMutation({
+  mutationFn: async (file: File) => {
+    let backup: unknown
+    try {
+      backup = JSON.parse(await file.text())
+    } catch {
+      throw new Error('文件不是有效的 JSON')
+    }
+    return api.importProjectBackup(backup)
+  },
+  onSuccess: async (result) => {
+    importMessage.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['projects'] })
+    await router.push({ name: 'workspace', params: { projectId: result.project_id } })
+  },
+  onError: (error) => {
+    importMessage.value = error instanceof Error ? error.message : '项目导入失败'
+  },
+})
+
 function submitProject() {
   const trimmedName = name.value.trim()
   if (!trimmedName) return
@@ -42,6 +64,13 @@ function submitProject() {
     name: trimmedName,
     description: description.value.trim() || undefined,
   })
+}
+
+function handleImport(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) importProject.mutate(file)
+  input.value = ''
 }
 </script>
 
@@ -55,12 +84,22 @@ function submitProject() {
         </div>
         <div class="project-list__actions">
           <Database :size="28" aria-hidden="true" />
+          <input ref="importInput" class="visually-hidden" type="file" accept="application/json,.json" @change="handleImport" />
+          <button class="button" type="button" @click="router.push({ name: 'model-profiles' })">
+            <Settings :size="17" aria-hidden="true" />
+            全局模型
+          </button>
+          <button class="button" type="button" :disabled="importProject.isPending.value" @click="importInput?.click()">
+            <Upload :size="17" aria-hidden="true" />
+            {{ importProject.isPending.value ? '导入中' : '导入备份' }}
+          </button>
           <button class="button button--primary" type="button" @click="isCreateDialogOpen = true">
             <Plus :size="17" aria-hidden="true" />
             新建项目
           </button>
         </div>
       </div>
+      <p v-if="importMessage" class="project-list__message">{{ importMessage }}</p>
 
       <div v-if="projectsQuery.isLoading.value" class="empty-state">正在加载项目</div>
       <div v-else-if="projects.length === 0" class="empty-state">暂无项目</div>
@@ -91,11 +130,11 @@ function submitProject() {
         <form class="dialog-form" @submit.prevent="submitProject">
           <label>
             <span>名称</span>
-            <input v-model="name" type="text" placeholder="长夜车站" autofocus />
+            <input v-model="name" type="text" placeholder="项目名称" autofocus />
           </label>
           <label>
             <span>简介</span>
-            <textarea v-model="description" rows="4" placeholder="小说项目的一句话备注" />
+            <textarea v-model="description" rows="4" placeholder="项目简介" />
           </label>
           <footer class="dialog__footer">
             <button class="button" type="button" @click="isCreateDialogOpen = false">取消</button>

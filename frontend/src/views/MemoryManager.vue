@@ -42,8 +42,8 @@ const memoryQuery = useQuery({
 })
 
 const profilesQuery = useQuery({
-  queryKey: computed(() => ['model-profiles', projectId.value]),
-  queryFn: () => api.listModelProfiles(projectId.value),
+  queryKey: ['model-profiles'],
+  queryFn: api.listModelProfiles,
 })
 
 const graphQuery = useQuery({

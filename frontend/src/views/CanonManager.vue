@@ -68,8 +68,8 @@ const blocksQuery = useQuery({
   enabled: computed(() => entityType.value === 'character'),
 })
 const modelProfilesQuery = useQuery({
-  queryKey: computed(() => ['model-profiles', projectId.value]),
-  queryFn: () => api.listModelProfiles(projectId.value),
+  queryKey: ['model-profiles'],
+  queryFn: api.listModelProfiles,
   enabled: computed(() => entityType.value === 'character'),
 })
 const characterStatesQuery = useQuery({

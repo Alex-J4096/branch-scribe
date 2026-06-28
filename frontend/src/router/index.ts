@@ -8,6 +8,7 @@ import MemoryManager from '@/views/MemoryManager.vue'
 import BlockTool from '@/views/BlockTool.vue'
 import ForeshadowingManager from '@/views/ForeshadowingManager.vue'
 import TimelineManager from '@/views/TimelineManager.vue'
+import TransferManager from '@/views/TransferManager.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -28,7 +29,7 @@ export const router = createRouter({
       component: BlockTool,
     },
     {
-      path: '/projects/:projectId/model-profiles',
+      path: '/settings/model-profiles',
       name: 'model-profiles',
       component: ModelProfileSettings,
     },
@@ -51,6 +52,11 @@ export const router = createRouter({
       path: '/projects/:projectId/timeline',
       name: 'timeline-manager',
       component: TimelineManager,
+    },
+    {
+      path: '/projects/:projectId/transfer',
+      name: 'transfer-manager',
+      component: TransferManager,
     },
   ],
 })

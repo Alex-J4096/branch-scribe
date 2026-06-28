@@ -18,7 +18,6 @@ var envVarNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type ModelProfile struct {
 	ID                  string          `json:"id"`
-	ProjectID           *string         `json:"project_id"`
 	Name                string          `json:"name"`
 	Provider            string          `json:"provider"`
 	Model               string          `json:"model"`

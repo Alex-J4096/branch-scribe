@@ -67,7 +67,6 @@ func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
 		END $$;
 
 		INSERT INTO model_profiles (
-			project_id,
 			name,
 			provider,
 			model,
@@ -82,7 +81,6 @@ func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
 			metadata
 		)
 		SELECT
-			source.project_id,
 			source.name || ' Embedding',
 			source.provider,
 			source.metadata->>'embedding_model',
@@ -118,6 +116,10 @@ func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
 		WHERE profile_type = 'llm'
 			AND embedding_profile_id IS NOT NULL
 		;
+
+		-- Model profiles are global application settings, not project data.
+		ALTER TABLE model_profiles
+			DROP COLUMN IF EXISTS project_id;
 
 		CREATE TABLE IF NOT EXISTS llm_conversations (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

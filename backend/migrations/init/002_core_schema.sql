@@ -168,7 +168,6 @@ CREATE TABLE IF NOT EXISTS timeline_events (
 
 CREATE TABLE IF NOT EXISTS model_profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -318,7 +317,6 @@ CREATE INDEX IF NOT EXISTS idx_character_states_project_character ON character_s
 CREATE INDEX IF NOT EXISTS idx_character_states_block ON character_states(block_id);
 CREATE INDEX IF NOT EXISTS idx_foreshadowings_project_status ON foreshadowings(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_timeline_events_project_order ON timeline_events(project_id, sort_order, created_at);
-CREATE INDEX IF NOT EXISTS idx_model_profiles_project_id ON model_profiles(project_id);
 CREATE INDEX IF NOT EXISTS idx_prompt_templates_project_task ON prompt_templates(project_id, task_type);
 CREATE INDEX IF NOT EXISTS idx_generation_runs_project_created_at ON generation_runs(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_generation_runs_block_id ON generation_runs(block_id);

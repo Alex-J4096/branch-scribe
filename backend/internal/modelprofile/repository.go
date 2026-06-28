@@ -20,8 +20,8 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) List(ctx context.Context, projectID string) ([]ModelProfile, error) {
-	rows, err := r.db.Query(ctx, selectModelProfileSQL+` WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
+func (r *Repository) List(ctx context.Context) ([]ModelProfile, error) {
+	rows, err := r.db.Query(ctx, selectModelProfileSQL+` ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +38,7 @@ func (r *Repository) List(ctx context.Context, projectID string) ([]ModelProfile
 	return profiles, rows.Err()
 }
 
-func (r *Repository) Create(ctx context.Context, projectID string, req CreateModelProfileRequest) (ModelProfile, error) {
+func (r *Repository) Create(ctx context.Context, req CreateModelProfileRequest) (ModelProfile, error) {
 	req, err := req.normalized()
 	if err != nil {
 		return ModelProfile{}, err
@@ -68,13 +68,12 @@ func (r *Repository) Create(ctx context.Context, projectID string, req CreateMod
 		req.EmbeddingProfileID = nil
 	}
 	if req.EmbeddingProfileID != nil {
-		if err := r.validateEmbeddingProfile(ctx, projectID, *req.EmbeddingProfileID); err != nil {
+		if err := r.validateEmbeddingProfile(ctx, *req.EmbeddingProfileID); err != nil {
 			return ModelProfile{}, err
 		}
 	}
 
 	profile, err := scanModelProfile(r.db.QueryRow(ctx, insertModelProfileSQL,
-		projectID,
 		req.Name,
 		req.Provider,
 		req.Model,
@@ -170,12 +169,8 @@ func (r *Repository) Update(ctx context.Context, profileID string, req UpdateMod
 		}
 	}
 	if req.EmbeddingProfileID != nil {
-		var projectID string
-		if err := r.db.QueryRow(ctx, `SELECT project_id::text FROM model_profiles WHERE id = $1`, profileID).Scan(&projectID); err != nil {
-			return ModelProfile{}, normalizeNotFound(err)
-		}
 		embeddingProfileID := strings.TrimSpace(*req.EmbeddingProfileID)
-		if err := r.validateEmbeddingProfile(ctx, projectID, embeddingProfileID); err != nil {
+		if err := r.validateEmbeddingProfile(ctx, embeddingProfileID); err != nil {
 			return ModelProfile{}, err
 		}
 		args = append(args, embeddingProfileID)
@@ -225,7 +220,6 @@ func (r *Repository) Delete(ctx context.Context, profileID string) error {
 const selectModelProfileSQL = `
 	SELECT
 		id::text,
-		project_id::text,
 		name,
 		provider,
 		model,
@@ -246,7 +240,6 @@ const selectModelProfileSQL = `
 
 const insertModelProfileSQL = `
 	INSERT INTO model_profiles (
-		project_id,
 		name,
 		provider,
 		model,
@@ -261,10 +254,9 @@ const insertModelProfileSQL = `
 		embedding_dimensions,
 		metadata
 	)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	RETURNING
 		id::text,
-		project_id::text,
 		name,
 		provider,
 		model,
@@ -288,7 +280,6 @@ const updateModelProfileSQL = `
 	WHERE id = $%d
 	RETURNING
 		id::text,
-		project_id::text,
 		name,
 		provider,
 		model,
@@ -312,14 +303,12 @@ type scanner interface {
 
 func scanModelProfile(scanner scanner) (ModelProfile, error) {
 	var profile ModelProfile
-	var projectID sql.NullString
 	var baseURL sql.NullString
 	var embeddingProfileID sql.NullString
 	var embeddingDimensions sql.NullInt64
 
 	err := scanner.Scan(
 		&profile.ID,
-		&projectID,
 		&profile.Name,
 		&profile.Provider,
 		&profile.Model,
@@ -339,9 +328,6 @@ func scanModelProfile(scanner scanner) (ModelProfile, error) {
 	if err != nil {
 		return ModelProfile{}, err
 	}
-	if projectID.Valid {
-		profile.ProjectID = &projectID.String
-	}
 	if baseURL.Valid {
 		profile.BaseURL = &baseURL.String
 	}
@@ -355,7 +341,7 @@ func scanModelProfile(scanner scanner) (ModelProfile, error) {
 	return profile, nil
 }
 
-func (r *Repository) validateEmbeddingProfile(ctx context.Context, projectID string, profileID string) error {
+func (r *Repository) validateEmbeddingProfile(ctx context.Context, profileID string) error {
 	if strings.TrimSpace(profileID) == "" {
 		return ErrInvalidModelProfile
 	}
@@ -363,9 +349,9 @@ func (r *Repository) validateEmbeddingProfile(ctx context.Context, projectID str
 	if err := r.db.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM model_profiles
-			WHERE id = $1 AND project_id = $2 AND profile_type = 'embedding'
+			WHERE id = $1 AND profile_type = 'embedding'
 		)
-	`, profileID, projectID).Scan(&exists); err != nil {
+	`, profileID).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
