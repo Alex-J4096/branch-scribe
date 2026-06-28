@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   AlertCircle,
+  ArrowUpRight,
   Bot,
   Check,
   ChevronDown,
@@ -24,11 +25,13 @@ import {
   Trash2,
   Wrench,
 } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
 
 import { api } from '@/api/client'
 import RichTextEditor from '@/components/editor/RichTextEditor.vue'
 import type {
   CanonEntity,
+  ConsistencyCheckResult,
   ContextPreview,
   GenerateOnceInput,
   GenerateOnceResult,
@@ -38,7 +41,7 @@ import type {
 } from '@/api/types'
 
 type InspectorMode = 'all' | 'sidebar' | 'editor' | 'llm'
-type InspectorSection = 'title' | 'associations' | 'summary' | 'editor' | 'llm' | 'fork' | 'revisions'
+type InspectorSection = 'title' | 'associations' | 'summary' | 'consistency' | 'editor' | 'llm' | 'fork' | 'revisions'
 
 const props = withDefaults(defineProps<{
   projectId: string
@@ -52,6 +55,7 @@ const emit = defineEmits<{
   changed: []
 }>()
 
+const router = useRouter()
 const queryClient = useQueryClient()
 const draftContent = ref('')
 const titleDraft = ref('')
@@ -94,6 +98,8 @@ const streamingOutput = ref('')
 const reasoningOutput = ref('')
 const generationError = ref('')
 const summaryError = ref('')
+const consistencyResult = ref<ConsistencyCheckResult | null>(null)
+const consistencyError = ref('')
 const isGenerationStreaming = ref(false)
 const draftSavedAt = ref<string | null>(null)
 const restoredLocalDraft = ref(false)
@@ -101,6 +107,7 @@ const openSections = ref({
   title: true,
   associations: false,
   summary: true,
+  consistency: true,
   editor: true,
   llm: props.mode === 'llm',
   fork: false,
@@ -243,14 +250,14 @@ const includedContextItems = computed(() => contextPreview.value?.items.filter((
 const visibleSections = computed<Set<InspectorSection>>(() => {
   switch (props.mode) {
     case 'sidebar':
-      return new Set(['title', 'associations', 'summary', 'fork', 'revisions'])
+      return new Set(['title', 'associations', 'summary', 'consistency', 'fork', 'revisions'])
     case 'editor':
       return new Set(['editor'])
     case 'llm':
       return new Set(['llm'])
     case 'all':
     default:
-      return new Set(['title', 'associations', 'summary', 'editor', 'llm', 'fork', 'revisions'])
+      return new Set(['title', 'associations', 'summary', 'consistency', 'editor', 'llm', 'fork', 'revisions'])
   }
 })
 
@@ -536,6 +543,7 @@ const generateCandidates = useMutation({
       await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
     }
     const input = buildGenerateInput()
+    generationInstruction.value = ''
     return api.generateCandidates({
       ...input,
       count: 2,
@@ -544,7 +552,6 @@ const generateCandidates = useMutation({
   onSuccess: async (result) => {
     candidateResults.value = result.candidates
     candidateRevisionIds.value = []
-    generationInstruction.value = ''
     generationError.value = ''
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] }),
@@ -673,6 +680,40 @@ const generateSummary = useMutation({
     void queryClient.invalidateQueries({ queryKey: ['summaries', props.projectId] })
   },
 })
+
+const checkConsistency = useMutation({
+  mutationFn: () => {
+    if (!selectedModelProfileId.value) throw new Error('请先选择可用的模型配置')
+    return api.checkBlockConsistency(props.projectId, props.blockId, selectedModelProfileId.value)
+  },
+  onSuccess: (result) => {
+    consistencyResult.value = result
+    consistencyError.value = ''
+  },
+  onError: (error) => {
+    consistencyError.value = error instanceof Error ? error.message : '一致性检查失败'
+  },
+})
+
+async function openConflictCanon(entityId: string) {
+  try {
+    const entity = await api.getCanonEntity(entityId)
+    await router.push({
+      name: 'canon-manager',
+      params: { projectId: props.projectId, entityType: entity.type },
+      query: { focus: entity.id },
+    })
+  } catch (error) {
+    consistencyError.value = error instanceof Error ? error.message : '无法打开关联设定'
+  }
+}
+
+function openConflictBlock() {
+  void router.push({
+    name: 'block-tool',
+    params: { projectId: props.projectId, blockId: consistencyResult.value?.block_id ?? props.blockId },
+  })
+}
 
 const previewGenerationContext = useMutation({
   mutationFn: () => api.previewGenerationContext(buildGenerateInput()),
@@ -921,6 +962,7 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
   reasoningOutput.value = ''
   regeneratingMessageId.value = regeneration?.messageId ?? ''
   pendingUserMessage.value = regeneration ? '' : instruction
+  if (!regeneration) generationInstruction.value = ''
 
   try {
     await api.generateStream(
@@ -951,7 +993,6 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
             contextPreview.value = event.context_preview
             excludedContextItemIds.value = event.context_preview.excluded_item_ids
           }
-          if (!regeneration) generationInstruction.value = ''
           pendingUserMessage.value = ''
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] }),
@@ -1308,6 +1349,46 @@ function replaceEditorSelectionWithGeneratedContent() {
           >
             <RefreshCw :size="16" aria-hidden="true" />
             {{ generateSummary.isPending.value ? '生成中' : currentSummary ? '刷新摘要' : '生成摘要' }}
+          </button>
+        </div>
+      </section>
+
+      <section v-if="visibleSections.has('consistency')" class="inspector-section">
+        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('consistency')">
+          <span>
+            <ChevronDown v-if="openSections.consistency" :size="16" aria-hidden="true" />
+            <ChevronRight v-else :size="16" aria-hidden="true" />
+            <h2>一致性检查</h2>
+          </span>
+          <AlertCircle :size="16" aria-hidden="true" />
+        </button>
+        <div v-show="openSections.consistency" class="inspector-section__body consistency-panel">
+          <div v-if="consistencyError" class="llm-message llm-message--error">
+            <AlertCircle :size="16" aria-hidden="true" /><span>{{ consistencyError }}</span>
+          </div>
+          <template v-if="consistencyResult">
+            <div class="consistency-panel__summary" :class="{ 'is-clean': consistencyResult.consistent }">
+              <strong>{{ consistencyResult.consistent ? '未发现明确冲突' : `发现 ${consistencyResult.conflicts.length} 项冲突` }}</strong>
+              <span>{{ consistencyResult.summary }}</span>
+            </div>
+            <article v-for="(conflict, index) in consistencyResult.conflicts" :key="`${conflict.canon_entity_id}-${index}`" class="consistency-conflict" :data-severity="conflict.severity">
+              <header>
+                <strong>{{ conflict.canon_name }}</strong>
+                <span>{{ conflict.severity === 'error' ? '冲突' : '警告' }}</span>
+              </header>
+              <p><b>正文</b>{{ conflict.claim }}</p>
+              <p><b>设定</b>{{ conflict.canon_fact }}</p>
+              <p>{{ conflict.explanation }}</p>
+              <small v-if="conflict.suggestion">建议：{{ conflict.suggestion }}</small>
+              <footer>
+                <button type="button" @click="openConflictCanon(conflict.canon_entity_id)">打开设定 <ArrowUpRight :size="13" /></button>
+                <button type="button" @click="openConflictBlock">打开 Block <ArrowUpRight :size="13" /></button>
+              </footer>
+            </article>
+          </template>
+          <button class="button button--primary" type="button" :disabled="!selectedModelProfileId || checkConsistency.isPending.value" @click="checkConsistency.mutate()">
+            <RefreshCw :size="16" aria-hidden="true" />
+            {{ checkConsistency.isPending.value ? '检查中' : consistencyResult ? '重新检查' : '检查当前正文' }}
           </button>
         </div>
       </section>

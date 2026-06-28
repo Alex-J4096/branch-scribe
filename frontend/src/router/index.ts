@@ -6,6 +6,8 @@ import ModelProfileSettings from '@/views/ModelProfileSettings.vue'
 import CanonManager from '@/views/CanonManager.vue'
 import MemoryManager from '@/views/MemoryManager.vue'
 import BlockTool from '@/views/BlockTool.vue'
+import ForeshadowingManager from '@/views/ForeshadowingManager.vue'
+import TimelineManager from '@/views/TimelineManager.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -39,6 +41,16 @@ export const router = createRouter({
       path: '/projects/:projectId/memory',
       name: 'memory-manager',
       component: MemoryManager,
+    },
+    {
+      path: '/projects/:projectId/foreshadowings',
+      name: 'foreshadowing-manager',
+      component: ForeshadowingManager,
+    },
+    {
+      path: '/projects/:projectId/timeline',
+      name: 'timeline-manager',
+      component: TimelineManager,
     },
   ],
 })

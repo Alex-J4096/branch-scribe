@@ -19,6 +19,8 @@ import {
   Plus,
   RefreshCw,
   Settings,
+  Telescope,
+  Clock3,
   Trash2,
   X,
 } from 'lucide-vue-next'
@@ -409,6 +411,14 @@ async function refreshWorkspace() {
       <button class="button" type="button" @click="router.push({ name: 'memory-manager', params: { projectId } })">
         <Database :size="16" aria-hidden="true" />
         Memory
+      </button>
+      <button class="button" type="button" @click="router.push({ name: 'foreshadowing-manager', params: { projectId } })">
+        <Telescope :size="16" aria-hidden="true" />
+        伏笔
+      </button>
+      <button class="button" type="button" @click="router.push({ name: 'timeline-manager', params: { projectId } })">
+        <Clock3 :size="16" aria-hidden="true" />
+        时间线
       </button>
     </header>
 

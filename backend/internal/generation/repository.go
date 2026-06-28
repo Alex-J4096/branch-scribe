@@ -429,6 +429,35 @@ func (r *Repository) ListBlockCanonFacts(ctx context.Context, projectID string, 
 	return facts, rows.Err()
 }
 
+func (r *Repository) GetCharacterCanonFact(ctx context.Context, projectID string, characterID string) (CanonFact, error) {
+	var fact CanonFact
+	var description sql.NullString
+	err := r.db.QueryRow(ctx, `
+		SELECT id::text, type, name, aliases, description, attributes, importance, status
+		FROM canon_entities
+		WHERE id = $1 AND project_id = $2 AND type = 'character'
+	`, characterID, projectID).Scan(
+		&fact.ID,
+		&fact.Type,
+		&fact.Name,
+		&fact.Aliases,
+		&description,
+		&fact.Attributes,
+		&fact.Importance,
+		&fact.Status,
+	)
+	if err != nil {
+		return CanonFact{}, normalizeNotFound(err)
+	}
+	if description.Valid {
+		fact.Description = &description.String
+	}
+	if fact.Aliases == nil {
+		fact.Aliases = []string{}
+	}
+	return fact, nil
+}
+
 func (r *Repository) ListRecentBlocks(ctx context.Context, projectID string, blockID string, limit int) ([]RecentBlockContext, error) {
 	if limit == 0 {
 		return []RecentBlockContext{}, nil

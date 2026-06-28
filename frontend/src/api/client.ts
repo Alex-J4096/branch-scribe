@@ -8,6 +8,12 @@ import type {
   BranchPath,
   CanonEntity,
   CanonEntityInput,
+  Foreshadowing,
+  ForeshadowingInput,
+  ConsistencyCheckResult,
+  TimelineEvent,
+  TimelineEventInput,
+  TimelineExtractionResult,
   CreateBlockInput,
   ModelProfileInput,
   PromptTemplateInput,
@@ -204,6 +210,7 @@ export const api = {
     }),
 
   getGraph: (projectId: string) => request<ProjectGraph>(`/projects/${projectId}/graph`),
+  listBlocks: (projectId: string) => request<Block[]>(`/projects/${projectId}/blocks`),
   createBlock: (projectId: string, input: CreateBlockInput) =>
     request<BlockDetail>(`/projects/${projectId}/blocks`, {
       method: 'POST',
@@ -286,6 +293,75 @@ export const api = {
     request<{ deleted: boolean }>(`/canon/${entityId}`, {
       method: 'DELETE',
     }),
+  extractCharacterCard: (
+    projectId: string,
+    characterId: string,
+    input: { block_id: string; block_ids: string[]; model_profile_id: string },
+  ) =>
+    request<import('./types').CharacterCardProposal>(`/projects/${projectId}/characters/${characterId}/extract-card`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  listCharacterStates: (projectId: string, characterId?: string) => {
+    const suffix = characterId ? `?character_id=${encodeURIComponent(characterId)}` : ''
+    return request<import('./types').CharacterState[]>(`/projects/${projectId}/character-states${suffix}`)
+  },
+  createCharacterState: (
+    projectId: string,
+    input: {
+      character_id: string
+      block_id?: string | null
+      state_key: string
+      state_value: Record<string, unknown>
+      notes?: string | null
+      occurred_at?: string | null
+      metadata?: Record<string, unknown>
+    },
+  ) =>
+    request<import('./types').CharacterState>(`/projects/${projectId}/character-states`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  listForeshadowings: (projectId: string, status?: Foreshadowing['status']) => {
+    const suffix = status ? `?status=${encodeURIComponent(status)}` : ''
+    return request<Foreshadowing[]>(`/projects/${projectId}/foreshadowings${suffix}`)
+  },
+  createForeshadowing: (projectId: string, input: ForeshadowingInput) =>
+    request<Foreshadowing>(`/projects/${projectId}/foreshadowings`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateForeshadowing: (id: string, input: ForeshadowingInput) =>
+    request<Foreshadowing>(`/foreshadowings/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  deleteForeshadowing: (id: string) =>
+    request<{ deleted: boolean }>(`/foreshadowings/${id}`, { method: 'DELETE' }),
+  checkBlockConsistency: (projectId: string, blockId: string, modelProfileId: string) =>
+    request<ConsistencyCheckResult>(`/projects/${projectId}/blocks/${blockId}/check-consistency`, {
+      method: 'POST',
+      body: JSON.stringify({ model_profile_id: modelProfileId }),
+    }),
+  extractTimelineEvents: (projectId: string, blockId: string, modelProfileId: string) =>
+    request<TimelineExtractionResult>(`/projects/${projectId}/blocks/${blockId}/extract-events`, {
+      method: 'POST',
+      body: JSON.stringify({ model_profile_id: modelProfileId }),
+    }),
+  listTimelineEvents: (projectId: string) =>
+    request<TimelineEvent[]>(`/projects/${projectId}/timeline-events`),
+  createTimelineEvent: (projectId: string, input: TimelineEventInput) =>
+    request<TimelineEvent>(`/projects/${projectId}/timeline-events`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateTimelineEvent: (id: string, input: TimelineEventInput) =>
+    request<TimelineEvent>(`/timeline-events/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  deleteTimelineEvent: (id: string) =>
+    request<{ deleted: boolean }>(`/timeline-events/${id}`, { method: 'DELETE' }),
 
   listMemoryChunks: (
     projectId: string,

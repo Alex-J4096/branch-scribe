@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,10 +35,372 @@ func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	router.POST("/generate/once", handler.GenerateOnce)
 	router.POST("/generate/candidates", handler.GenerateCandidates)
 	router.POST("/generate/stream", handler.GenerateStream)
+	router.POST("/projects/:projectId/characters/:characterId/extract-card", handler.ExtractCharacterCard)
+	router.POST("/projects/:projectId/blocks/:blockId/check-consistency", handler.CheckConsistency)
+	router.POST("/projects/:projectId/blocks/:blockId/extract-events", handler.ExtractTimelineEvents)
 	router.POST("/blocks/:blockId/summarize", handler.GenerateBlockSummary)
 	router.POST("/branches/:branchId/summarize", handler.GenerateBranchSummary)
 	router.POST("/summaries/:summaryId/refresh", handler.RefreshSummary)
 	router.GET("/projects/:projectId/summaries", handler.ListSummaries)
+}
+
+func (h *Handler) CheckConsistency(c *gin.Context) {
+	var req BlockAnalysisRequest
+	if !bindBlockAnalysisRequest(c, &req) {
+		return
+	}
+	projectID, blockID := c.Param("projectId"), c.Param("blockId")
+	blockContext, profile, err := h.loadBlockAnalysisInputs(c.Request.Context(), projectID, blockID, req.ModelProfileID)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	canonJSON, _ := json.Marshal(blockContext.CanonFacts)
+	prompt := fmt.Sprintf(`检查当前小说正文是否违反给定 Canon 硬设定。只报告正文中有明确证据的冲突，不要把信息缺失当作冲突。
+返回严格 JSON，不要 Markdown 代码块：
+{"consistent":true,"summary":"简短结论","conflicts":[{"canon_entity_id":"必须来自输入 Canon 的 id","canon_name":"设定名","severity":"warning 或 error","claim":"正文中的冲突表述","canon_fact":"被违反的设定","explanation":"冲突原因","suggestion":"修订建议"}]}
+没有冲突时 conflicts 必须是空数组且 consistent 为 true。
+
+Canon：
+%s
+
+当前正文：
+%s`, canonJSON, blockContext.Content)
+	raw, run, err := h.runBlockAnalysis(c.Request.Context(), projectID, blockID, "check_consistency", profile, prompt, map[string]any{
+		"block_content": blockContext.Content,
+		"canon_facts":   blockContext.CanonFacts,
+	})
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	result, err := parseConsistencyCheck(raw, blockContext.CanonFacts)
+	if err != nil {
+		_, _ = h.repo.MarkRunFailed(c.Request.Context(), run.ID, err.Error(), 0)
+		api.RespondError(c, http.StatusBadGateway, "INVALID_CONSISTENCY_RESPONSE", "model returned an invalid consistency check")
+		return
+	}
+	result.BlockID, result.Model, result.GenerationRunID = blockID, profile.Model, run.ID
+	api.RespondOK(c, result)
+}
+
+func (h *Handler) ExtractTimelineEvents(c *gin.Context) {
+	var req BlockAnalysisRequest
+	if !bindBlockAnalysisRequest(c, &req) {
+		return
+	}
+	projectID, blockID := c.Param("projectId"), c.Param("blockId")
+	blockContext, profile, err := h.loadBlockAnalysisInputs(c.Request.Context(), projectID, blockID, req.ModelProfileID)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	canonJSON, _ := json.Marshal(blockContext.CanonFacts)
+	prompt := fmt.Sprintf(`从当前小说正文提取明确发生的时间线事件。不要提取计划、假设或仅被提及的往事。
+返回严格 JSON，不要 Markdown 代码块：
+{"events":[{"title":"事件标题","description":"发生了什么","event_time":"正文中的时间表达或 null","sort_order":0,"canon_entity_id":"相关输入 Canon id 或 null"}]}
+事件按正文发生顺序排列，sort_order 从 0 开始；没有事件时返回空数组。
+
+可关联 Canon：
+%s
+
+当前正文：
+%s`, canonJSON, blockContext.Content)
+	raw, run, err := h.runBlockAnalysis(c.Request.Context(), projectID, blockID, "extract_timeline_events", profile, prompt, map[string]any{
+		"block_content": blockContext.Content,
+		"canon_facts":   blockContext.CanonFacts,
+	})
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	result, err := parseTimelineExtraction(raw, blockContext.CanonFacts)
+	if err != nil {
+		_, _ = h.repo.MarkRunFailed(c.Request.Context(), run.ID, err.Error(), 0)
+		api.RespondError(c, http.StatusBadGateway, "INVALID_TIMELINE_EXTRACTION_RESPONSE", "model returned invalid timeline events")
+		return
+	}
+	result.BlockID, result.Model, result.GenerationRunID = blockID, profile.Model, run.ID
+	api.RespondOK(c, result)
+}
+
+func bindBlockAnalysisRequest(c *gin.Context, req *BlockAnalysisRequest) bool {
+	if err := c.ShouldBindJSON(req); err != nil || strings.TrimSpace(req.ModelProfileID) == "" {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_BLOCK_ANALYSIS_REQUEST", "model_profile_id is required")
+		return false
+	}
+	req.ModelProfileID = strings.TrimSpace(req.ModelProfileID)
+	return true
+}
+
+func (h *Handler) loadBlockAnalysisInputs(ctx context.Context, projectID, blockID, profileID string) (BlockContext, ModelProfile, error) {
+	blockContext, err := h.repo.GetBlockContext(ctx, projectID, blockID)
+	if err != nil {
+		return BlockContext{}, ModelProfile{}, err
+	}
+	profile, err := h.repo.GetModelProfile(ctx, projectID, profileID)
+	return blockContext, profile, err
+}
+
+func (h *Handler) runBlockAnalysis(ctx context.Context, projectID, blockID, taskType string, profile ModelProfile, prompt string, snapshotData map[string]any) (string, GenerationRun, error) {
+	snapshot, _ := json.Marshal(snapshotData)
+	run, err := h.repo.CreateRun(ctx, GenerationRunInput{
+		ProjectID: projectID, BlockID: &blockID, TaskType: taskType, Provider: profile.Provider,
+		Model: profile.Model, Temperature: profile.Temperature, TopP: profile.TopP,
+		MaxTokens: profile.MaxTokens, ContextWindow: profile.ContextWindow, InputContextSnapshot: snapshot,
+	})
+	if err != nil {
+		return "", GenerationRun{}, err
+	}
+	startedAt := time.Now()
+	result, err := h.provider.GenerateOnce(ctx, GenerateRequest{
+		Provider: profile.Provider, Model: profile.Model, BaseURL: stringValue(profile.BaseURL),
+		APIKey: stringValue(profile.APIKey), Messages: []ChatMessage{
+			{Role: "system", Content: "你是严谨的小说工程分析器，只依据提供的正文与设定输出结构化结果。"},
+			{Role: "user", Content: prompt},
+		},
+		Temperature: profile.Temperature, TopP: profile.TopP, MaxTokens: profile.MaxTokens,
+	})
+	if err != nil {
+		_, _ = h.repo.MarkRunFailed(ctx, run.ID, err.Error(), int(time.Since(startedAt).Milliseconds()))
+		return "", run, err
+	}
+	if _, err := h.repo.MarkRunSucceeded(ctx, run.ID, result, int(time.Since(startedAt).Milliseconds())); err != nil {
+		return "", run, err
+	}
+	return result.Content, run, nil
+}
+
+func parseConsistencyCheck(content string, facts []CanonFact) (ConsistencyCheckResult, error) {
+	var result ConsistencyCheckResult
+	if err := decodeStructuredJSON(content, &result); err != nil {
+		return result, err
+	}
+	validIDs := make(map[string]bool, len(facts))
+	for _, fact := range facts {
+		validIDs[fact.ID] = true
+	}
+	for _, conflict := range result.Conflicts {
+		if !validIDs[conflict.CanonEntityID] || strings.TrimSpace(conflict.Explanation) == "" ||
+			(conflict.Severity != "warning" && conflict.Severity != "error") {
+			return ConsistencyCheckResult{}, ErrInvalidGenerationRequest
+		}
+	}
+	if len(result.Conflicts) > 0 {
+		result.Consistent = false
+	}
+	if result.Conflicts == nil {
+		result.Conflicts = []ConsistencyConflict{}
+	}
+	return result, nil
+}
+
+func parseTimelineExtraction(content string, facts []CanonFact) (TimelineExtractionResult, error) {
+	var result TimelineExtractionResult
+	if err := decodeStructuredJSON(content, &result); err != nil {
+		return result, err
+	}
+	validIDs := make(map[string]bool, len(facts))
+	for _, fact := range facts {
+		validIDs[fact.ID] = true
+	}
+	for index := range result.Events {
+		event := &result.Events[index]
+		event.Title, event.Description = strings.TrimSpace(event.Title), strings.TrimSpace(event.Description)
+		if event.Title == "" || event.Description == "" {
+			return TimelineExtractionResult{}, ErrInvalidGenerationRequest
+		}
+		event.SortOrder = index
+		if event.CanonEntityID != nil && !validIDs[*event.CanonEntityID] {
+			event.CanonEntityID = nil
+		}
+	}
+	if result.Events == nil {
+		result.Events = []TimelineEventProposal{}
+	}
+	return result, nil
+}
+
+func decodeStructuredJSON(content string, target any) error {
+	content = strings.TrimSpace(content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	return json.Unmarshal([]byte(strings.TrimSpace(content)), target)
+}
+
+func (h *Handler) ExtractCharacterCard(c *gin.Context) {
+	var req ExtractCharacterCardRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_CHARACTER_CARD_REQUEST", "invalid character card extraction request")
+		return
+	}
+	req.BlockID = strings.TrimSpace(req.BlockID)
+	req.ModelProfileID = strings.TrimSpace(req.ModelProfileID)
+	if req.BlockID == "" || req.ModelProfileID == "" {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_CHARACTER_CARD_REQUEST", "block_id and model_profile_id are required")
+		return
+	}
+	blockIDs := uniqueNonEmptyStrings(req.BlockIDs)
+	if len(blockIDs) == 0 {
+		blockIDs = []string{req.BlockID}
+	}
+	if !slices.Contains(blockIDs, req.BlockID) || blockIDs[0] != req.BlockID {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_CHARACTER_CARD_REQUEST", "block_ids must start with the starting block")
+		return
+	}
+
+	projectID := c.Param("projectId")
+	character, err := h.repo.GetCharacterCanonFact(c.Request.Context(), projectID, c.Param("characterId"))
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	sourceSections := make([]string, 0, len(blockIDs))
+	var sourceBranchID *string
+	startOrder := 0
+	previousOrder := 0
+	for index, blockID := range blockIDs {
+		source, err := h.repo.GetBlockContext(c.Request.Context(), projectID, blockID)
+		if err != nil {
+			respondGenerationError(c, err)
+			return
+		}
+		if index == 0 {
+			sourceBranchID = source.BranchID
+			startOrder = source.OrderIndex
+			previousOrder = source.OrderIndex
+		} else if !equalOptionalStrings(sourceBranchID, source.BranchID) ||
+			source.OrderIndex < startOrder || source.OrderIndex < previousOrder {
+			api.RespondError(c, http.StatusBadRequest, "INVALID_CHARACTER_CARD_REQUEST", "all blocks must be ordered descendants on the starting block branch")
+			return
+		}
+		previousOrder = source.OrderIndex
+		title := fmt.Sprintf("Block %d", index+1)
+		if source.BlockTitle != nil {
+			title = *source.BlockTitle
+		}
+		sourceSections = append(sourceSections, fmt.Sprintf("## %s\n%s", title, source.Content))
+	}
+	sourceContent := strings.Join(sourceSections, "\n\n")
+	profile, err := h.repo.GetModelProfile(c.Request.Context(), projectID, req.ModelProfileID)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+
+	characterJSON, _ := json.Marshal(character)
+	prompt := fmt.Sprintf(`请根据后续剧情更新角色卡。只总结剧情中明确出现或可可靠推断的新状态，不要虚构。
+返回严格 JSON，不要 Markdown 代码块，格式为：
+{"description":"更新后的完整角色描述","attributes":{},"change_summary":"相对旧角色卡的变化摘要"}
+
+旧角色卡：
+%s
+
+后续剧情：
+%s`, characterJSON, sourceContent)
+	snapshot, _ := json.Marshal(map[string]any{
+		"character_id":     character.ID,
+		"source_block_id":  req.BlockID,
+		"source_block_ids": blockIDs,
+		"character_card":   character,
+		"source_content":   sourceContent,
+	})
+	blockID := req.BlockID
+	run, err := h.repo.CreateRun(c.Request.Context(), GenerationRunInput{
+		ProjectID:            projectID,
+		BlockID:              &blockID,
+		TaskType:             "extract_character_card",
+		Provider:             profile.Provider,
+		Model:                profile.Model,
+		Temperature:          profile.Temperature,
+		TopP:                 profile.TopP,
+		MaxTokens:            profile.MaxTokens,
+		ContextWindow:        profile.ContextWindow,
+		InputContextSnapshot: snapshot,
+	})
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	startedAt := time.Now()
+	result, err := h.provider.GenerateOnce(c.Request.Context(), GenerateRequest{
+		Provider:    profile.Provider,
+		Model:       profile.Model,
+		BaseURL:     stringValue(profile.BaseURL),
+		APIKey:      stringValue(profile.APIKey),
+		Messages:    []ChatMessage{{Role: "system", Content: "你是小说角色设定编辑器，负责从后续剧情维护可追溯的角色卡版本。"}, {Role: "user", Content: prompt}},
+		Temperature: profile.Temperature,
+		TopP:        profile.TopP,
+		MaxTokens:   profile.MaxTokens,
+	})
+	if err != nil {
+		_, _ = h.repo.MarkRunFailed(c.Request.Context(), run.ID, err.Error(), int(time.Since(startedAt).Milliseconds()))
+		respondGenerationError(c, err)
+		return
+	}
+	proposal, err := parseCharacterCardProposal(result.Content)
+	if err != nil {
+		_, _ = h.repo.MarkRunFailed(c.Request.Context(), run.ID, err.Error(), int(time.Since(startedAt).Milliseconds()))
+		api.RespondError(c, http.StatusBadGateway, "INVALID_CHARACTER_CARD_RESPONSE", "model returned an invalid character card")
+		return
+	}
+	if _, err := h.repo.MarkRunSucceeded(c.Request.Context(), run.ID, result, int(time.Since(startedAt).Milliseconds())); err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	proposal.CharacterID = character.ID
+	proposal.SourceBlockID = req.BlockID
+	proposal.SourceBlockIDs = blockIDs
+	proposal.Model = profile.Model
+	proposal.GenerationRunID = run.ID
+	api.RespondOK(c, proposal)
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func equalOptionalStrings(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func parseCharacterCardProposal(content string) (CharacterCardProposal, error) {
+	content = strings.TrimSpace(content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	var proposal CharacterCardProposal
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &proposal); err != nil {
+		return CharacterCardProposal{}, err
+	}
+	if strings.TrimSpace(proposal.Description) == "" || len(proposal.Attributes) == 0 || !json.Valid(proposal.Attributes) {
+		return CharacterCardProposal{}, ErrInvalidGenerationRequest
+	}
+	return proposal, nil
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (h *Handler) ListConversations(c *gin.Context) {

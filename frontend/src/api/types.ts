@@ -106,6 +106,109 @@ export type CanonEntity = {
   updated_at: string
 }
 
+export type CharacterState = {
+  id: string
+  project_id: string
+  character_id: string
+  block_id: string | null
+  state_key: string
+  state_value: Record<string, unknown>
+  notes: string | null
+  occurred_at: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type CharacterCardProposal = {
+  character_id: string
+  source_block_id: string
+  source_block_ids: string[]
+  description: string
+  attributes: Record<string, unknown>
+  change_summary: string
+  model: string
+  generation_run_id: string
+}
+
+export type Foreshadowing = {
+  id: string
+  project_id: string
+  title: string
+  description: string | null
+  status: 'planted' | 'developed' | 'resolved' | 'abandoned'
+  planted_block_id: string | null
+  resolved_block_id: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type ForeshadowingInput = {
+  title: string
+  description?: string | null
+  status: Foreshadowing['status']
+  planted_block_id?: string | null
+  resolved_block_id?: string | null
+  metadata?: Record<string, unknown>
+}
+
+export type ConsistencyConflict = {
+  canon_entity_id: string
+  canon_name: string
+  severity: 'warning' | 'error'
+  claim: string
+  canon_fact: string
+  explanation: string
+  suggestion: string
+}
+
+export type ConsistencyCheckResult = {
+  block_id: string
+  consistent: boolean
+  summary: string
+  conflicts: ConsistencyConflict[]
+  model: string
+  generation_run_id: string
+}
+
+export type TimelineEvent = {
+  id: string
+  project_id: string
+  title: string
+  description: string | null
+  event_time: string | null
+  sort_order: number
+  block_id: string | null
+  canon_entity_id: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type TimelineEventInput = {
+  title: string
+  description?: string | null
+  event_time?: string | null
+  sort_order: number
+  block_id?: string | null
+  canon_entity_id?: string | null
+  metadata?: Record<string, unknown>
+}
+
+export type TimelineExtractionResult = {
+  block_id: string
+  events: Array<{
+    title: string
+    description: string
+    event_time: string | null
+    sort_order: number
+    canon_entity_id: string | null
+  }>
+  model: string
+  generation_run_id: string
+}
+
 export type MemoryChunk = {
   id: string
   project_id: string

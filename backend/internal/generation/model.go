@@ -73,6 +73,61 @@ type GenerateCandidatesResponse struct {
 	Candidates []GenerateOnceResponse `json:"candidates"`
 }
 
+type ExtractCharacterCardRequest struct {
+	BlockID        string   `json:"block_id"`
+	BlockIDs       []string `json:"block_ids"`
+	ModelProfileID string   `json:"model_profile_id"`
+}
+
+type CharacterCardProposal struct {
+	CharacterID     string          `json:"character_id"`
+	SourceBlockID   string          `json:"source_block_id"`
+	SourceBlockIDs  []string        `json:"source_block_ids"`
+	Description     string          `json:"description"`
+	Attributes      json.RawMessage `json:"attributes"`
+	ChangeSummary   string          `json:"change_summary"`
+	Model           string          `json:"model"`
+	GenerationRunID string          `json:"generation_run_id"`
+}
+
+type BlockAnalysisRequest struct {
+	ModelProfileID string `json:"model_profile_id"`
+}
+
+type ConsistencyConflict struct {
+	CanonEntityID string `json:"canon_entity_id"`
+	CanonName     string `json:"canon_name"`
+	Severity      string `json:"severity"`
+	Claim         string `json:"claim"`
+	CanonFact     string `json:"canon_fact"`
+	Explanation   string `json:"explanation"`
+	Suggestion    string `json:"suggestion"`
+}
+
+type ConsistencyCheckResult struct {
+	BlockID         string                `json:"block_id"`
+	Consistent      bool                  `json:"consistent"`
+	Summary         string                `json:"summary"`
+	Conflicts       []ConsistencyConflict `json:"conflicts"`
+	Model           string                `json:"model"`
+	GenerationRunID string                `json:"generation_run_id"`
+}
+
+type TimelineEventProposal struct {
+	Title         string  `json:"title"`
+	Description   string  `json:"description"`
+	EventTime     *string `json:"event_time"`
+	SortOrder     int     `json:"sort_order"`
+	CanonEntityID *string `json:"canon_entity_id"`
+}
+
+type TimelineExtractionResult struct {
+	BlockID         string                  `json:"block_id"`
+	Events          []TimelineEventProposal `json:"events"`
+	Model           string                  `json:"model"`
+	GenerationRunID string                  `json:"generation_run_id"`
+}
+
 type GenerateStreamEvent struct {
 	Type             string          `json:"type"`
 	Content          string          `json:"content,omitempty"`
