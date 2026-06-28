@@ -1180,7 +1180,7 @@ function replaceEditorSelectionWithGeneratedContent() {
 </script>
 
 <template>
-  <section class="inspector">
+  <section class="inspector" :class="{ 'inspector--single-tool': props.mode === 'editor' || props.mode === 'llm' }">
     <div v-if="blockQuery.isLoading.value" class="empty-state empty-state--panel">正在加载 block</div>
 
     <template v-else-if="blockDetail">
@@ -1312,8 +1312,17 @@ function replaceEditorSelectionWithGeneratedContent() {
         </div>
       </section>
 
-      <section v-if="visibleSections.has('editor')" class="inspector-section">
-        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('editor')">
+      <section
+        v-if="visibleSections.has('editor')"
+        class="inspector-section"
+        :class="{ 'inspector-section--single': props.mode === 'editor' }"
+      >
+        <button
+          v-if="props.mode !== 'editor'"
+          class="panel-section__header panel-section__header--button"
+          type="button"
+          @click="toggleSection('editor')"
+        >
           <span>
             <ChevronDown v-if="openSections.editor" :size="16" aria-hidden="true" />
             <ChevronRight v-else :size="16" aria-hidden="true" />
@@ -1321,7 +1330,7 @@ function replaceEditorSelectionWithGeneratedContent() {
           </span>
           <FileText :size="16" aria-hidden="true" />
         </button>
-        <div v-show="openSections.editor" class="inspector-section__body">
+        <div v-show="props.mode === 'editor' || openSections.editor" class="inspector-section__body inspector-editor">
           <div class="editor-field">
             <span>正文 · {{ wordCount }} 字 · {{ isContentDirty ? '未保存' : '当前 revision' }}</span>
             <RichTextEditor
@@ -1349,8 +1358,17 @@ function replaceEditorSelectionWithGeneratedContent() {
         </div>
       </section>
 
-      <section v-if="visibleSections.has('llm')" class="inspector-section">
-        <button class="panel-section__header panel-section__header--button" type="button" @click="toggleSection('llm')">
+      <section
+        v-if="visibleSections.has('llm')"
+        class="inspector-section"
+        :class="{ 'inspector-section--single': props.mode === 'llm' }"
+      >
+        <button
+          v-if="props.mode !== 'llm'"
+          class="panel-section__header panel-section__header--button"
+          type="button"
+          @click="toggleSection('llm')"
+        >
           <span>
             <ChevronDown v-if="openSections.llm" :size="16" aria-hidden="true" />
             <ChevronRight v-else :size="16" aria-hidden="true" />
@@ -1358,7 +1376,7 @@ function replaceEditorSelectionWithGeneratedContent() {
           </span>
           <Bot :size="16" aria-hidden="true" />
         </button>
-        <div v-show="openSections.llm" class="inspector-section__body llm-panel llm-chat">
+        <div v-show="props.mode === 'llm' || openSections.llm" class="inspector-section__body llm-panel llm-chat">
           <header class="llm-chat__header">
             <select v-model="selectedConversationId" aria-label="选择对话">
               <option value="">新对话</option>

@@ -670,7 +670,10 @@ async function refreshWorkspace() {
             LLM 操作
           </button>
         </div>
-        <div class="workspace-tool-window__body">
+        <div
+          class="workspace-tool-window__body"
+          :class="{ 'workspace-tool-window__body--single': activeWorkspacePanel === 'editor' || activeWorkspacePanel === 'llm' }"
+        >
           <BlockInspector
             v-if="selectedBlock"
             :project-id="projectId"

@@ -40,7 +40,10 @@ const activePanel = ref<'sidebar' | 'editor' | 'llm'>('editor')
         </button>
       </nav>
     </header>
-    <section class="block-tool-page__content">
+    <section
+      class="block-tool-page__content"
+      :class="{ 'block-tool-page__content--single': activePanel === 'editor' || activePanel === 'llm' }"
+    >
       <BlockInspector :project-id="projectId" :block-id="blockId" :mode="activePanel" />
     </section>
   </main>
