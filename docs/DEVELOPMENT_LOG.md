@@ -671,3 +671,13 @@
 - 收紧项目列表、主工作台顶栏与侧栏、Block 节点和浮动工具窗口，提升画布与正文的有效工作面积。
 - 同步调整模型配置、Canon、Memory、独立 Block 工具页和正文编辑器的标题、留白及控件密度。
 - 运行前端生产构建并通过；在浏览器中核对项目页、主工作台、正文工具与模型配置页。
+
+### Step 70: 启动 Phase 8 小说工程数据基础
+
+- 新增 `character_states`、`foreshadowings` 和 `timeline_events` 三类项目数据表，包含项目归属、Block/Canon 关联、JSON metadata、索引与更新时间触发器。
+- 启动兼容迁移会为已有数据库幂等补建 Phase 8 表、索引和触发器，新安装则由初始化 schema 直接创建。
+- 新增角色状态 CRUD API，可按角色筛选并记录状态键、结构化状态值、发生位置与关联 Block。
+- 新增伏笔 CRUD API，支持埋设、发展、回收、废弃四种生命周期状态，并可关联埋设与回收 Block。
+- 新增时间线事件 CRUD API，支持故事内时间文本、手动排序以及 Block/Canon Entity 关联。
+- 运行 `go test ./...` 并通过；连接真实本地 PostgreSQL 启动后端，确认兼容迁移执行成功且全部 Phase 8 基础路由完成注册。
+- 更新 `ARCHITECTURE.md`，完成 Phase 8 的三项数据库任务和三项基础记录后端任务。

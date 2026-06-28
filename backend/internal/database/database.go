@@ -141,6 +141,65 @@ func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
 		CREATE INDEX IF NOT EXISTS idx_llm_messages_conversation_created
 			ON llm_messages(conversation_id, created_at, id);
 
+		CREATE TABLE IF NOT EXISTS character_states (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			character_id UUID NOT NULL REFERENCES canon_entities(id) ON DELETE CASCADE,
+			block_id UUID REFERENCES blocks(id) ON DELETE SET NULL,
+			state_key TEXT NOT NULL,
+			state_value JSONB NOT NULL DEFAULT '{}'::jsonb,
+			notes TEXT,
+			occurred_at TEXT,
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
+		CREATE TABLE IF NOT EXISTS foreshadowings (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			title TEXT NOT NULL,
+			description TEXT,
+			status TEXT NOT NULL DEFAULT 'planted'
+				CHECK (status IN ('planted', 'developed', 'resolved', 'abandoned')),
+			planted_block_id UUID REFERENCES blocks(id) ON DELETE SET NULL,
+			resolved_block_id UUID REFERENCES blocks(id) ON DELETE SET NULL,
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
+		CREATE TABLE IF NOT EXISTS timeline_events (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			title TEXT NOT NULL,
+			description TEXT,
+			event_time TEXT,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			block_id UUID REFERENCES blocks(id) ON DELETE SET NULL,
+			canon_entity_id UUID REFERENCES canon_entities(id) ON DELETE SET NULL,
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
+		CREATE INDEX IF NOT EXISTS idx_character_states_project_character
+			ON character_states(project_id, character_id);
+		CREATE INDEX IF NOT EXISTS idx_character_states_block ON character_states(block_id);
+		CREATE INDEX IF NOT EXISTS idx_foreshadowings_project_status
+			ON foreshadowings(project_id, status);
+		CREATE INDEX IF NOT EXISTS idx_timeline_events_project_order
+			ON timeline_events(project_id, sort_order, created_at);
+		DROP TRIGGER IF EXISTS set_character_states_updated_at ON character_states;
+		CREATE TRIGGER set_character_states_updated_at
+			BEFORE UPDATE ON character_states
+			FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+		DROP TRIGGER IF EXISTS set_foreshadowings_updated_at ON foreshadowings;
+		CREATE TRIGGER set_foreshadowings_updated_at
+			BEFORE UPDATE ON foreshadowings
+			FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+		DROP TRIGGER IF EXISTS set_timeline_events_updated_at ON timeline_events;
+		CREATE TRIGGER set_timeline_events_updated_at
+			BEFORE UPDATE ON timeline_events
+			FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 		CREATE OR REPLACE FUNCTION seed_default_prompt_operations(target_project_id UUID)
 		RETURNS void
 		LANGUAGE sql

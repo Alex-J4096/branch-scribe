@@ -1679,16 +1679,16 @@ branchscribe/
 
 ### 数据库任务
 
-* [ ] 创建 character_states 表，可选。
-* [ ] 创建 foreshadowings 表，可选。
-* [ ] 创建 timeline_events 表，可选。
+* [x] 创建 character_states 表，可选。
+* [x] 创建 foreshadowings 表，可选。
+* [x] 创建 timeline_events 表，可选。
 
 ### 后端任务
 
 * [ ] 实现 check_consistency task。
-* [ ] 实现角色状态记录。
-* [ ] 实现伏笔记录。
-* [ ] 实现时间线事件记录。
+* [x] 实现角色状态记录。
+* [x] 实现伏笔记录。
+* [x] 实现时间线事件记录。
 * [ ] 支持从 block 中提取事件，可选。
 * [ ] 支持从 block 中提取角色状态，可选。
 * [ ] 支持检查当前正文是否违反 canon。

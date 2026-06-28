@@ -124,6 +124,48 @@ CREATE TABLE IF NOT EXISTS summary_snapshots (
     CONSTRAINT summary_snapshots_status_check CHECK (status IN ('valid', 'stale', 'failed'))
 );
 
+CREATE TABLE IF NOT EXISTS character_states (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    character_id UUID NOT NULL REFERENCES canon_entities(id) ON DELETE CASCADE,
+    block_id UUID REFERENCES blocks(id) ON DELETE SET NULL,
+    state_key TEXT NOT NULL,
+    state_value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    notes TEXT,
+    occurred_at TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS foreshadowings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'planted',
+    planted_block_id UUID REFERENCES blocks(id) ON DELETE SET NULL,
+    resolved_block_id UUID REFERENCES blocks(id) ON DELETE SET NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT foreshadowings_status_check CHECK (status IN ('planted', 'developed', 'resolved', 'abandoned'))
+);
+
+CREATE TABLE IF NOT EXISTS timeline_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT,
+    event_time TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    block_id UUID REFERENCES blocks(id) ON DELETE SET NULL,
+    canon_entity_id UUID REFERENCES canon_entities(id) ON DELETE SET NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS model_profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
@@ -272,6 +314,10 @@ CREATE INDEX IF NOT EXISTS idx_memory_chunks_project_kind ON memory_chunks(proje
 CREATE INDEX IF NOT EXISTS idx_memory_chunks_tags ON memory_chunks USING gin (tags);
 CREATE INDEX IF NOT EXISTS idx_summary_snapshots_project_target ON summary_snapshots(project_id, target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_summary_snapshots_status ON summary_snapshots(status);
+CREATE INDEX IF NOT EXISTS idx_character_states_project_character ON character_states(project_id, character_id);
+CREATE INDEX IF NOT EXISTS idx_character_states_block ON character_states(block_id);
+CREATE INDEX IF NOT EXISTS idx_foreshadowings_project_status ON foreshadowings(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_timeline_events_project_order ON timeline_events(project_id, sort_order, created_at);
 CREATE INDEX IF NOT EXISTS idx_model_profiles_project_id ON model_profiles(project_id);
 CREATE INDEX IF NOT EXISTS idx_prompt_templates_project_task ON prompt_templates(project_id, task_type);
 CREATE INDEX IF NOT EXISTS idx_generation_runs_project_created_at ON generation_runs(project_id, created_at DESC);
@@ -291,6 +337,18 @@ CREATE OR REPLACE TRIGGER set_blocks_updated_at
 
 CREATE OR REPLACE TRIGGER set_canon_entities_updated_at
     BEFORE UPDATE ON canon_entities
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE TRIGGER set_character_states_updated_at
+    BEFORE UPDATE ON character_states
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE TRIGGER set_foreshadowings_updated_at
+    BEFORE UPDATE ON foreshadowings
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE TRIGGER set_timeline_events_updated_at
+    BEFORE UPDATE ON timeline_events
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE OR REPLACE TRIGGER set_model_profiles_updated_at
