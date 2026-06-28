@@ -188,6 +188,7 @@ export type GenerateOnceInput = {
   top_p?: number
   max_tokens?: number
   excluded_context_item_ids?: string[]
+  regenerate_message_id?: string
 }
 
 export type LLMConversation = {
@@ -205,6 +206,7 @@ export type LLMConversationMessage = {
   role: 'user' | 'assistant'
   content: string
   generation_run_id: string | null
+  model: string | null
   created_at: string
   updated_at: string
 }

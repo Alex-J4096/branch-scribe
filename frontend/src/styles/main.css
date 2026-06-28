@@ -1457,11 +1457,13 @@ p {
 
 .chat-message {
   display: grid;
-  max-width: 88%;
+  width: min(92%, 760px);
   gap: 7px;
 }
 
 .chat-message--user {
+  width: auto;
+  max-width: 78%;
   align-self: flex-end;
 }
 
@@ -1490,6 +1492,14 @@ p {
   white-space: pre-wrap;
 }
 
+.llm-composer > textarea,
+.chat-message__editor,
+.chat-message__content {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
 .chat-message--user .chat-message__content {
   border-color: #c6ded9;
   border-bottom-right-radius: 4px;
@@ -1497,17 +1507,71 @@ p {
 }
 
 .chat-message--assistant .chat-message__content {
-  border-bottom-left-radius: 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 1px;
 }
 
 .chat-message__actions {
   display: flex;
   justify-content: flex-start;
-  gap: 5px;
+  gap: 2px;
+  min-height: 27px;
 }
 
 .chat-message--user .chat-message__actions {
   justify-content: flex-end;
+}
+
+.chat-message__action {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #71808b;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.chat-message:hover .chat-message__action,
+.chat-message__action:focus-visible {
+  opacity: 1;
+}
+
+.chat-message__action:hover {
+  background: #edf2f4;
+  color: #2b6f69;
+}
+
+.chat-message__action:disabled {
+  cursor: wait;
+  opacity: 0.35;
+}
+
+.chat-message__editor {
+  min-height: 120px;
+  border-color: #b9d4d1;
+  border-radius: 12px;
+  background: #fbfdfd;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.chat-message__edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.chat-message__edit-actions small {
+  margin-right: auto;
+  color: #87949d;
+  font-size: 10px;
 }
 
 .llm-composer {
@@ -1526,6 +1590,9 @@ p {
 .llm-composer > textarea {
   min-height: 70px;
   border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #263544;
   padding: 2px;
   box-shadow: none;
 }
@@ -1881,6 +1948,40 @@ p {
 
 .llm-composer__send:disabled {
   background: #aab8c1;
+}
+
+.llm-version-toggle {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #667985;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 7px;
+}
+
+.llm-version-toggle:hover {
+  background: #f0f5f6;
+}
+
+.llm-version-toggle--active {
+  border-color: #b9d9d4;
+  background: #e7f3f1;
+  color: #216b65;
+}
+
+.spin {
+  animation: llm-spin 0.9s linear infinite;
+}
+
+@keyframes llm-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .field-label span {

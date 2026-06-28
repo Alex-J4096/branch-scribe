@@ -62,11 +62,14 @@ const selectedModelProfileId = ref('')
 const generationTaskType = ref('continue')
 const selectedPromptTemplateId = ref('')
 const generationInstruction = ref('')
+const generateTwoVersions = ref(false)
 const contextNodeCount = ref(1)
 const selectedConversationId = ref('')
 const pendingUserMessage = ref('')
 const editingMessageId = ref('')
 const editingMessageContent = ref('')
+const savingMessageRevisionId = ref('')
+const regeneratingMessageId = ref('')
 const temperatureOverride = ref(1)
 const topPOverride = ref(1)
 const maxTokensOverride = ref(4096)
@@ -522,22 +525,31 @@ const saveGeneratedRevision = useMutation({
 })
 
 const generateCandidates = useMutation({
-  mutationFn: () => {
+  mutationFn: async () => {
     if (!selectedModelProfileId.value) throw new Error('请先选择可用的模型配置')
+    if (!generationInstruction.value.trim()) throw new Error('请输入想和 Agent 讨论或执行的内容')
+    if (!selectedConversationId.value) {
+      const conversation = await api.createLLMConversation(props.blockId, { project_id: props.projectId })
+      selectedConversationId.value = conversation.id
+      await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
+    } else {
+      await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
+    }
+    const input = buildGenerateInput()
     return api.generateCandidates({
-      project_id: props.projectId,
-      block_id: props.blockId,
-      task_type: 'compare_revisions',
-      model_profile_id: selectedModelProfileId.value,
-      user_instruction: generationInstruction.value.trim(),
-      excluded_context_item_ids: excludedContextItemIds.value,
+      ...input,
       count: 2,
     })
   },
-  onSuccess: (result) => {
+  onSuccess: async (result) => {
     candidateResults.value = result.candidates
     candidateRevisionIds.value = []
+    generationInstruction.value = ''
     generationError.value = ''
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] }),
+      queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] }),
+    ])
   },
   onError: (error) => {
     generationError.value = error instanceof Error ? error.message : '候选版本生成失败'
@@ -879,9 +891,10 @@ function toggleSection(section: keyof typeof openSections.value) {
   openSections.value[section] = !openSections.value[section]
 }
 
-async function startGenerationStream() {
+async function startGenerationStream(regeneration?: { instruction: string; messageId: string }) {
   if (!canGenerate.value || isGenerationStreaming.value) return
-  if (!generationInstruction.value.trim()) {
+  const instruction = regeneration?.instruction.trim() ?? generationInstruction.value.trim()
+  if (!instruction) {
     generationError.value = '请输入想和 Agent 讨论或执行的内容'
     return
   }
@@ -906,11 +919,12 @@ async function startGenerationStream() {
   generationResult.value = null
   streamingOutput.value = ''
   reasoningOutput.value = ''
-  pendingUserMessage.value = generationInstruction.value.trim()
+  regeneratingMessageId.value = regeneration?.messageId ?? ''
+  pendingUserMessage.value = regeneration ? '' : instruction
 
   try {
     await api.generateStream(
-      buildGenerateInput(),
+      buildGenerateInput(instruction, regeneration?.messageId),
       (event) => {
         if (event.type === 'delta') {
           streamingOutput.value += event.content ?? ''
@@ -937,9 +951,12 @@ async function startGenerationStream() {
             contextPreview.value = event.context_preview
             excludedContextItemIds.value = event.context_preview.excluded_item_ids
           }
-          generationInstruction.value = ''
+          if (!regeneration) generationInstruction.value = ''
           pendingUserMessage.value = ''
-          void queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
+          void Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] }),
+            queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] }),
+          ])
           return
         }
         if (event.type === 'error') {
@@ -956,11 +973,19 @@ async function startGenerationStream() {
     }
   } finally {
     isGenerationStreaming.value = false
+    if (generationResult.value && selectedConversationId.value) {
+      await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
+      streamingOutput.value = ''
+      reasoningOutput.value = ''
+    }
+    if (regeneration) {
+      regeneratingMessageId.value = ''
+    }
     generationAbortController = null
   }
 }
 
-function buildGenerateInput(): GenerateOnceInput {
+function buildGenerateInput(instruction = generationInstruction.value.trim(), regenerateMessageId?: string): GenerateOnceInput {
   return {
     project_id: props.projectId,
     block_id: props.blockId,
@@ -968,13 +993,14 @@ function buildGenerateInput(): GenerateOnceInput {
     model_profile_id: selectedModelProfileId.value,
     prompt_template_id: selectedPromptTemplateId.value || null,
     selected_text: selectedTextForGeneration.value,
-    user_instruction: generationInstruction.value.trim(),
+    user_instruction: instruction,
     context_node_count: contextNodeCount.value,
     conversation_id: selectedConversationId.value || null,
     temperature: temperatureOverride.value,
     top_p: topPOverride.value,
     max_tokens: maxTokensOverride.value,
     excluded_context_item_ids: excludedContextItemIds.value,
+    regenerate_message_id: regenerateMessageId,
   }
 }
 
@@ -1009,6 +1035,32 @@ async function copyMessage(content: string) {
   await navigator.clipboard.writeText(content)
 }
 
+async function saveAssistantMessageAsRevision(message: LLMConversationMessage) {
+  if (message.role !== 'assistant') return
+  savingMessageRevisionId.value = message.id
+  generationError.value = ''
+  try {
+    await api.createRevision(props.blockId, {
+      parent_revision_id: currentRevision.value?.id ?? null,
+      content: textToHtml(message.content),
+      content_format: 'html',
+      source: 'llm',
+      generation_run_id: message.generation_run_id,
+      metadata: {
+        source_message_id: message.id,
+        source_conversation_id: message.conversation_id,
+      },
+      set_current: true,
+    })
+    clearLocalDraft()
+    await refreshInspector()
+  } catch (error) {
+    generationError.value = error instanceof Error ? error.message : '保存回复为 Revision 失败'
+  } finally {
+    savingMessageRevisionId.value = ''
+  }
+}
+
 function beginEditMessage(message: LLMConversationMessage) {
   editingMessageId.value = message.id
   editingMessageContent.value = message.content
@@ -1019,8 +1071,26 @@ function cancelEditMessage() {
   editingMessageContent.value = ''
 }
 
+function regenerateMessage(message: LLMConversationMessage) {
+  if (isGenerationStreaming.value || generateCandidates.isPending.value) return
+  const messageIndex = conversationMessages.value.findIndex((item) => item.id === message.id)
+  const target = message.role === 'assistant'
+    ? message
+    : conversationMessages.value.slice(messageIndex + 1).find((item) => item.role === 'assistant')
+  const source = message.role === 'user'
+    ? message
+    : conversationMessages.value.slice(0, messageIndex).reverse().find((item) => item.role === 'user')
+  if (!source || !target) {
+    generationError.value = '未找到这条消息对应的用户输入或 Agent 回复'
+    return
+  }
+  void startGenerationStream({ instruction: source.content, messageId: target.id })
+}
+
 function submitComposer() {
-  if (!isGenerationStreaming.value) {
+  if (generateTwoVersions.value) {
+    if (!generateCandidates.isPending.value) generateCandidates.mutate()
+  } else if (!isGenerationStreaming.value) {
     void startGenerationStream()
   }
 }
@@ -1323,28 +1393,51 @@ function replaceEditorSelectionWithGeneratedContent() {
               class="chat-message"
               :class="`chat-message--${message.role}`"
             >
-              <div class="chat-message__role">{{ message.role === 'user' ? '你' : 'Agent' }}</div>
+              <div class="chat-message__role">
+                {{ message.role === 'user' ? '你' : `Agent${message.model ? ` · ${message.model}` : ''}` }}
+              </div>
               <template v-if="editingMessageId === message.id">
-                <textarea v-model="editingMessageContent" rows="4" />
-                <div class="chat-message__actions">
-                  <button class="button button--primary" type="button" @click="updateConversationMessage.mutate()">保存并截断后续</button>
+                <textarea v-model="editingMessageContent" class="chat-message__editor" rows="5" />
+                <div class="chat-message__edit-actions">
+                  <small>仅保存当前消息，不影响后续对话</small>
                   <button class="button" type="button" @click="cancelEditMessage">取消</button>
+                  <button class="button button--primary" type="button" @click="updateConversationMessage.mutate()">保存</button>
                 </div>
               </template>
               <template v-else>
-                <div class="chat-message__content">{{ message.content }}</div>
+                <div class="chat-message__content">
+                  {{ regeneratingMessageId === message.id ? (streamingOutput || '正在重新生成…') : message.content }}
+                </div>
                 <div class="chat-message__actions">
-                  <button class="icon-button" type="button" title="复制" @click="copyMessage(message.content)">
+                  <button class="chat-message__action" type="button" title="复制消息" @click="copyMessage(message.content)">
                     <Copy :size="14" aria-hidden="true" />
                   </button>
                   <button
-                    v-if="message.role === 'user'"
-                    class="icon-button"
+                    class="chat-message__action"
                     type="button"
-                    title="编辑此轮"
+                    title="编辑消息"
                     @click="beginEditMessage(message)"
                   >
                     <Pencil :size="14" aria-hidden="true" />
+                  </button>
+                  <button
+                    class="chat-message__action"
+                    type="button"
+                    title="重新生成"
+                    :disabled="isGenerationStreaming || generateCandidates.isPending.value"
+                    @click="regenerateMessage(message)"
+                  >
+                    <RefreshCw :size="14" aria-hidden="true" />
+                  </button>
+                  <button
+                    v-if="message.role === 'assistant'"
+                    class="chat-message__action"
+                    type="button"
+                    title="保存为 Revision"
+                    :disabled="savingMessageRevisionId === message.id"
+                    @click="saveAssistantMessageAsRevision(message)"
+                  >
+                    <Save :size="14" aria-hidden="true" />
                   </button>
                 </div>
               </template>
@@ -1354,19 +1447,27 @@ function replaceEditorSelectionWithGeneratedContent() {
               <div class="chat-message__role">你</div>
               <div class="chat-message__content">{{ pendingUserMessage }}</div>
             </article>
-            <article v-if="streamingOutput || isGenerationStreaming" class="chat-message chat-message--assistant">
-              <div class="chat-message__role">Agent</div>
+            <article
+              v-if="!regeneratingMessageId && (streamingOutput || isGenerationStreaming)"
+              class="chat-message chat-message--assistant"
+            >
+              <div class="chat-message__role">Agent{{ selectedModelProfile?.model ? ` · ${selectedModelProfile.model}` : '' }}</div>
               <div class="chat-message__content">{{ streamingOutput || '正在思考…' }}</div>
-              <button
-                v-if="generationResult"
-                class="button button--primary"
-                type="button"
-                :disabled="saveGeneratedRevision.isPending.value"
-                @click="saveGeneratedRevision.mutate()"
-              >
-                <Check :size="15" aria-hidden="true" />
-                保存为 Revision
-              </button>
+              <div v-if="streamingOutput" class="chat-message__actions">
+                <button class="chat-message__action" type="button" title="复制消息" @click="copyMessage(streamingOutput)">
+                  <Copy :size="14" aria-hidden="true" />
+                </button>
+                <button
+                  v-if="generationResult"
+                  class="chat-message__action"
+                  type="button"
+                  title="保存为 Revision"
+                  :disabled="saveGeneratedRevision.isPending.value"
+                  @click="saveGeneratedRevision.mutate()"
+                >
+                  <Save :size="14" aria-hidden="true" />
+                </button>
+              </div>
             </article>
           </div>
 
@@ -1429,11 +1530,6 @@ function replaceEditorSelectionWithGeneratedContent() {
                       </button>
                     </div>
                     <div v-if="!promptOperations.length" class="llm-menu-empty">还没有写作操作，点击右上角 ＋ 创建。</div>
-                    <footer class="llm-menu-footer">
-                      <button class="llm-menu-action" type="button" :disabled="generateCandidates.isPending.value" @click="generateCandidates.mutate()">
-                        <CopyPlus :size="15" aria-hidden="true" />生成两个候选版本
-                      </button>
-                    </footer>
                   </template>
                   <form v-else class="llm-operation-editor" @submit.prevent="savePromptOperation.mutate()">
                     <header class="llm-menu-header">
@@ -1515,16 +1611,30 @@ function replaceEditorSelectionWithGeneratedContent() {
                 </div>
               </details>
 
+              <button
+                class="llm-version-toggle"
+                :class="{ 'llm-version-toggle--active': generateTwoVersions }"
+                type="button"
+                :aria-pressed="generateTwoVersions"
+                title="开启后每次发送生成两个候选版本"
+                @click="generateTwoVersions = !generateTwoVersions"
+              >
+                <CopyPlus :size="14" aria-hidden="true" />
+                双版本
+              </button>
+
               <button v-if="isGenerationStreaming" class="llm-composer__send" type="button" title="停止" @click="cancelGeneration">■</button>
               <button
                 v-else
                 class="llm-composer__send"
                 type="button"
-                title="发送"
-                :disabled="!canGenerate || !generationInstruction.trim()"
+                :title="generateTwoVersions ? '生成两个版本' : '发送'"
+                :disabled="!canGenerate || !generationInstruction.trim() || generateCandidates.isPending.value"
                 @click="submitComposer"
               >
-                <Send :size="17" aria-hidden="true" />
+                <RefreshCw v-if="generateCandidates.isPending.value" class="spin" :size="16" aria-hidden="true" />
+                <CopyPlus v-else-if="generateTwoVersions" :size="16" aria-hidden="true" />
+                <Send v-else :size="17" aria-hidden="true" />
               </button>
             </div>
           </div>

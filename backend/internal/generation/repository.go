@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -99,10 +98,12 @@ func (r *Repository) DeleteConversation(ctx context.Context, conversationID stri
 
 func (r *Repository) ListConversationMessages(ctx context.Context, conversationID string) ([]ConversationMessage, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id::text, conversation_id::text, role, content, generation_run_id::text, created_at, updated_at
-		FROM llm_messages
-		WHERE conversation_id = $1
-		ORDER BY created_at, id
+		SELECT message.id::text, message.conversation_id::text, message.role, message.content,
+			message.generation_run_id::text, run.model, message.created_at, message.updated_at
+		FROM llm_messages AS message
+		LEFT JOIN generation_runs AS run ON run.id = message.generation_run_id
+		WHERE message.conversation_id = $1
+		ORDER BY message.created_at, message.id
 	`, conversationID)
 	if err != nil {
 		return nil, err
@@ -132,7 +133,8 @@ func (r *Repository) AppendConversationMessage(ctx context.Context, conversation
 	message, err := scanConversationMessage(tx.QueryRow(ctx, `
 		INSERT INTO llm_messages (conversation_id, role, content, generation_run_id)
 		VALUES ($1, $2, $3, $4)
-		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text, created_at, updated_at
+		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text,
+			NULL::text, created_at, updated_at
 	`, conversationID, role, content, nullableString(runID)))
 	if err != nil {
 		return ConversationMessage{}, normalizeNotFound(err)
@@ -166,21 +168,15 @@ func (r *Repository) UpdateConversationMessage(ctx context.Context, messageID st
 	}
 	defer tx.Rollback(ctx)
 	var conversationID string
-	var createdAt time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT conversation_id::text, created_at FROM llm_messages WHERE id = $1 AND role = 'user'
-	`, messageID).Scan(&conversationID, &createdAt); err != nil {
+		SELECT conversation_id::text FROM llm_messages WHERE id = $1
+	`, messageID).Scan(&conversationID); err != nil {
 		return ConversationMessage{}, normalizeNotFound(err)
-	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM llm_messages
-		WHERE conversation_id = $1 AND (created_at, id) > ($2, $3::uuid)
-	`, conversationID, createdAt, messageID); err != nil {
-		return ConversationMessage{}, err
 	}
 	message, err := scanConversationMessage(tx.QueryRow(ctx, `
 		UPDATE llm_messages SET content = $2, updated_at = now() WHERE id = $1
-		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text, created_at, updated_at
+		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text,
+			NULL::text, created_at, updated_at
 	`, messageID, content))
 	if err != nil {
 		return ConversationMessage{}, err
@@ -194,6 +190,28 @@ func (r *Repository) UpdateConversationMessage(ctx context.Context, messageID st
 	return message, nil
 }
 
+func (r *Repository) ReplaceConversationAssistant(
+	ctx context.Context,
+	conversationID string,
+	messageID string,
+	content string,
+	runID string,
+) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE llm_messages
+		SET content = $3, generation_run_id = $4, updated_at = now()
+		WHERE id = $1 AND conversation_id = $2 AND role = 'assistant'
+	`, messageID, conversationID, strings.TrimSpace(content), runID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrGenerationResourceNotFound
+	}
+	_, err = r.db.Exec(ctx, `UPDATE llm_conversations SET updated_at = now() WHERE id = $1`, conversationID)
+	return err
+}
+
 type conversationMessageScanner interface {
 	Scan(dest ...any) error
 }
@@ -201,12 +219,16 @@ type conversationMessageScanner interface {
 func scanConversationMessage(scanner conversationMessageScanner) (ConversationMessage, error) {
 	var message ConversationMessage
 	var runID sql.NullString
+	var model sql.NullString
 	err := scanner.Scan(
 		&message.ID, &message.ConversationID, &message.Role, &message.Content,
-		&runID, &message.CreatedAt, &message.UpdatedAt,
+		&runID, &model, &message.CreatedAt, &message.UpdatedAt,
 	)
 	if runID.Valid {
 		message.GenerationRunID = &runID.String
+	}
+	if model.Valid {
+		message.Model = &model.String
 	}
 	return message, err
 }

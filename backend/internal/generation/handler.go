@@ -124,7 +124,7 @@ func (h *Handler) GenerateCandidates(c *gin.Context) {
 	responses := make([]GenerateOnceResponse, 0, 2)
 	for index := 0; index < 2; index++ {
 		candidateRequest := req.GenerateOnceRequest
-		candidateRequest.TaskType = "compare_revisions"
+		candidateRequest.SkipConversationSave = true
 		candidateRequest.UserInstruction = strings.TrimSpace(candidateRequest.UserInstruction) +
 			fmt.Sprintf("\n生成候选版本 %d。它应与另一个候选在情节选择、表达或节奏上有实质区别，只输出候选正文。", index+1)
 		response, err := h.generateOnce(c.Request.Context(), candidateRequest)
@@ -133,6 +133,33 @@ func (h *Handler) GenerateCandidates(c *gin.Context) {
 			return
 		}
 		responses = append(responses, response)
+	}
+	if req.ConversationID != nil {
+		if _, err := h.repo.AppendConversationMessage(
+			c.Request.Context(),
+			*req.ConversationID,
+			"user",
+			conversationUserContent(req.GenerateOnceRequest),
+			&responses[0].GenerationRun.ID,
+		); err != nil {
+			respondGenerationError(c, err)
+			return
+		}
+		for _, response := range responses {
+			if strings.TrimSpace(response.OutputText) == "" {
+				continue
+			}
+			if _, err := h.repo.AppendConversationMessage(
+				c.Request.Context(),
+				*req.ConversationID,
+				"assistant",
+				response.OutputText,
+				&response.GenerationRun.ID,
+			); err != nil {
+				respondGenerationError(c, err)
+				return
+			}
+		}
 	}
 	api.RespondOK(c, GenerateCandidatesResponse{Candidates: responses})
 }
@@ -396,7 +423,22 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 			}
 			run = succeededRun
 			if prepared.Request.ConversationID != nil && strings.TrimSpace(output) != "" {
-				_, _ = h.repo.AppendConversationMessage(c.Request.Context(), *prepared.Request.ConversationID, "assistant", output, &run.ID)
+				var saveErr error
+				if prepared.Request.RegenerateMessageID != nil {
+					saveErr = h.repo.ReplaceConversationAssistant(
+						c.Request.Context(),
+						*prepared.Request.ConversationID,
+						*prepared.Request.RegenerateMessageID,
+						output,
+						run.ID,
+					)
+				} else {
+					_, saveErr = h.repo.AppendConversationMessage(c.Request.Context(), *prepared.Request.ConversationID, "assistant", output, &run.ID)
+				}
+				if saveErr != nil {
+					writeSSE(c, GenerateStreamEvent{Type: "error", Error: "failed to save conversation reply"})
+					return
+				}
 			}
 			writeSSE(c, GenerateStreamEvent{
 				Type:             "done",
@@ -458,9 +500,21 @@ func (h *Handler) generateOnce(ctx context.Context, req GenerateOnceRequest) (Ge
 	if err != nil {
 		return GenerateOnceResponse{}, err
 	}
-	if prepared.Request.ConversationID != nil && strings.TrimSpace(result.Content) != "" {
-		if _, err := h.repo.AppendConversationMessage(ctx, *prepared.Request.ConversationID, "assistant", result.Content, &run.ID); err != nil {
-			return GenerateOnceResponse{}, err
+	if prepared.Request.ConversationID != nil && !prepared.Request.SkipConversationSave && strings.TrimSpace(result.Content) != "" {
+		var saveErr error
+		if prepared.Request.RegenerateMessageID != nil {
+			saveErr = h.repo.ReplaceConversationAssistant(
+				ctx,
+				*prepared.Request.ConversationID,
+				*prepared.Request.RegenerateMessageID,
+				result.Content,
+				run.ID,
+			)
+		} else {
+			_, saveErr = h.repo.AppendConversationMessage(ctx, *prepared.Request.ConversationID, "assistant", result.Content, &run.ID)
+		}
+		if saveErr != nil {
+			return GenerateOnceResponse{}, saveErr
 		}
 	}
 	return GenerateOnceResponse{
@@ -561,11 +615,24 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 		if err != nil {
 			return preparedGeneration{}, err
 		}
+		regenerationTargetFound := req.RegenerateMessageID == nil
 		for _, message := range history {
+			if req.RegenerateMessageID != nil && message.ID == *req.RegenerateMessageID {
+				if message.Role != "assistant" {
+					return preparedGeneration{}, ErrInvalidGenerationRequest
+				}
+				regenerationTargetFound = true
+				break
+			}
 			messages = append(messages, ChatMessage{Role: message.Role, Content: message.Content})
 		}
-		if _, err := h.repo.AppendConversationMessage(ctx, *req.ConversationID, "user", conversationUserContent(req), &run.ID); err != nil {
-			return preparedGeneration{}, err
+		if !regenerationTargetFound {
+			return preparedGeneration{}, ErrGenerationResourceNotFound
+		}
+		if !req.SkipConversationSave && req.RegenerateMessageID == nil {
+			if _, err := h.repo.AppendConversationMessage(ctx, *req.ConversationID, "user", conversationUserContent(req), &run.ID); err != nil {
+				return preparedGeneration{}, err
+			}
 		}
 	}
 	messages = append(messages, ChatMessage{Role: "user", Content: contextPreview.UserPrompt})

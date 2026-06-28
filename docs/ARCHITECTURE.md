@@ -476,7 +476,7 @@ CREATE TABLE generation_runs (
 
 ### 6.12 llm_conversations / llm_messages
 
-LLM 辅助写作对话独立于正文 revision 和 generation run 保存。conversation 归属于 block；message 保存线性的 `user` / `assistant` 对话流，并可通过 `generation_run_id` 追溯实际模型调用。编辑历史 user message 时截断其后的消息，再从该轮继续生成。
+LLM 辅助写作对话独立于正文 revision 和 generation run 保存。conversation 归属于 block；message 保存线性的 `user` / `assistant` 对话流，并可通过 `generation_run_id` 追溯实际模型调用。编辑历史消息时仅更新该消息内容，后续消息保持不变；重新生成会直接替换对应的 assistant 回复及其 generation run 关联，不新增一轮消息。
 
 ```sql
 CREATE TABLE llm_conversations (
@@ -1573,7 +1573,12 @@ branchscribe/
 * [x] 支持在 Chatbox 中新增、编辑和删除写作操作及其 Prompt。
 * [x] 为每个项目初始化可编辑的默认写作操作，并在生成时使用选中的 Prompt Template。
 * [x] 支持快捷切换模型、创建/切换/删除对话。
-* [x] 支持复制消息和编辑 user 消息后从该轮继续。
+* [x] 支持复制、编辑 user/assistant 消息，编辑仅保存当前消息且不截断后续对话。
+* [x] 支持从任意 assistant 回复直接保存 Revision。
+* [x] 支持在 Chatbox 底栏开启双版本模式，使每次提交生成两个候选回复。
+* [x] 统一 Chatbox 输入与消息正文样式，Agent 回复展示模型名称。
+* [x] user/assistant 消息均支持从操作栏原位重新生成对应回复，工具悬停时展示名称。
+* [x] 流式生成完成后切换为带模型信息、可编辑的持久化 assistant 消息。
 
 ### 验收标准
 
@@ -1585,6 +1590,8 @@ branchscribe/
 * [x] LLM 调用记录包含 input_context_snapshot。
 * [x] 同一 block 可维护多个持久化 LLM 对话，并在生成时携带完整历史消息。
 * [x] 用户无需修改代码即可调整默认操作 Prompt 或创建自定义写作操作。
+* [x] 双版本模式复用当前操作、模型参数、上下文和对话历史，并只记录一次 user 消息。
+* [x] 编辑任意历史消息后，后续 LLM 请求使用编辑后的完整对话历史。
 
 ---
 

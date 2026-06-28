@@ -47,6 +47,8 @@ type GenerateOnceRequest struct {
 	TopP                   *float64 `json:"top_p"`
 	MaxTokens              *int     `json:"max_tokens"`
 	ExcludedContextItemIDs []string `json:"excluded_context_item_ids"`
+	RegenerateMessageID    *string  `json:"regenerate_message_id"`
+	SkipConversationSave   bool     `json:"-"`
 }
 
 type GenerateOnceResponse struct {
@@ -101,6 +103,7 @@ type ConversationMessage struct {
 	Role            string    `json:"role"`
 	Content         string    `json:"content"`
 	GenerationRunID *string   `json:"generation_run_id"`
+	Model           *string   `json:"model"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
