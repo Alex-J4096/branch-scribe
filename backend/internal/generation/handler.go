@@ -30,6 +30,7 @@ func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	router.GET("/llm-conversations/:conversationId/messages", handler.ListConversationMessages)
 	router.PATCH("/llm-conversations/:conversationId", handler.UpdateConversation)
 	router.DELETE("/llm-conversations/:conversationId", handler.DeleteConversation)
+	router.DELETE("/llm-conversations/:conversationId/messages", handler.DeleteConversationMessages)
 	router.PATCH("/llm-messages/:messageId", handler.UpdateConversationMessage)
 	router.POST("/generate/context-preview", handler.ContextPreview)
 	router.POST("/generate/once", handler.GenerateOnce)
@@ -469,6 +470,24 @@ func (h *Handler) UpdateConversationMessage(c *gin.Context) {
 		return
 	}
 	api.RespondOK(c, item)
+}
+
+func (h *Handler) DeleteConversationMessages(c *gin.Context) {
+	var req DeleteConversationMessagesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_CONVERSATION_REQUEST", "invalid message deletion request")
+		return
+	}
+	messageIDs, err := normalizeMessageIDs(req.MessageIDs)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	if err := h.repo.DeleteConversationMessages(c.Request.Context(), c.Param("conversationId"), messageIDs); err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	api.RespondOK(c, gin.H{"deleted": len(messageIDs)})
 }
 
 func (h *Handler) GenerateCandidates(c *gin.Context) {
@@ -978,19 +997,15 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 		if err != nil {
 			return preparedGeneration{}, err
 		}
-		regenerationTargetFound := req.RegenerateMessageID == nil
-		for _, message := range history {
-			if req.RegenerateMessageID != nil && message.ID == *req.RegenerateMessageID {
-				if message.Role != "assistant" {
-					return preparedGeneration{}, ErrInvalidGenerationRequest
-				}
-				regenerationTargetFound = true
-				break
+		historyForRequest := history
+		if req.RegenerateMessageID != nil {
+			historyForRequest, err = conversationHistoryBeforeRegeneration(history, *req.RegenerateMessageID)
+			if err != nil {
+				return preparedGeneration{}, err
 			}
-			messages = append(messages, ChatMessage{Role: message.Role, Content: message.Content})
 		}
-		if !regenerationTargetFound {
-			return preparedGeneration{}, ErrGenerationResourceNotFound
+		for _, message := range historyForRequest {
+			messages = append(messages, ChatMessage{Role: message.Role, Content: message.Content})
 		}
 		if !req.SkipConversationSave && req.RegenerateMessageID == nil {
 			if _, err := h.repo.AppendConversationMessage(ctx, *req.ConversationID, "user", conversationUserContent(req), &run.ID); err != nil {
@@ -1010,6 +1025,55 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 		PromptTemplateID: promptTemplateID,
 		BaseURL:          baseURL,
 	}, nil
+}
+
+func conversationHistoryBeforeRegeneration(history []ConversationMessage, targetAssistantID string) ([]ConversationMessage, error) {
+	targetIndex := -1
+	for index, message := range history {
+		if message.ID == targetAssistantID {
+			if message.Role != "assistant" {
+				return nil, ErrInvalidGenerationRequest
+			}
+			targetIndex = index
+			break
+		}
+	}
+	if targetIndex < 0 {
+		return nil, ErrGenerationResourceNotFound
+	}
+
+	sourceUserIndex := -1
+	for index := targetIndex - 1; index >= 0; index-- {
+		if history[index].Role == "user" {
+			sourceUserIndex = index
+			break
+		}
+	}
+	if sourceUserIndex < 0 {
+		return nil, ErrInvalidGenerationRequest
+	}
+
+	return history[:sourceUserIndex], nil
+}
+
+func normalizeMessageIDs(messageIDs []string) ([]string, error) {
+	if len(messageIDs) == 0 || len(messageIDs) > 200 {
+		return nil, ErrInvalidGenerationRequest
+	}
+	seen := make(map[string]struct{}, len(messageIDs))
+	result := make([]string, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, ErrInvalidGenerationRequest
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result, nil
 }
 
 func conversationUserContent(req GenerateOnceRequest) string {

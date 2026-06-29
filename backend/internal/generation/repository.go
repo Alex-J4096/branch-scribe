@@ -190,6 +190,29 @@ func (r *Repository) UpdateConversationMessage(ctx context.Context, messageID st
 	return message, nil
 }
 
+func (r *Repository) DeleteConversationMessages(ctx context.Context, conversationID string, messageIDs []string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
+		DELETE FROM llm_messages
+		WHERE conversation_id = $1 AND id = ANY($2::uuid[])
+	`, conversationID, messageIDs)
+	if err != nil {
+		return normalizeNotFound(err)
+	}
+	if int(tag.RowsAffected()) != len(messageIDs) {
+		return ErrGenerationResourceNotFound
+	}
+	if _, err := tx.Exec(ctx, `UPDATE llm_conversations SET updated_at = now() WHERE id = $1`, conversationID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (r *Repository) ReplaceConversationAssistant(
 	ctx context.Context,
 	conversationID string,

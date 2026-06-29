@@ -229,11 +229,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  updateBranch: (branchId: string, input: { name?: string; status?: Branch['status'] }) =>
+  updateBranch: (branchId: string, input: { name?: string; description?: string; status?: Branch['status'] }) =>
     request<Branch>(`/branches/${branchId}`, {
       method: 'PATCH',
       body: JSON.stringify(input),
     }),
+  deleteBranch: (branchId: string) =>
+    request<{ deleted: boolean }>(`/branches/${branchId}`, { method: 'DELETE' }),
 
   getGraph: (projectId: string) => request<ProjectGraph>(`/projects/${projectId}/graph`),
   listBlocks: (projectId: string) => request<Block[]>(`/projects/${projectId}/blocks`),
@@ -541,6 +543,11 @@ export const api = {
     request<import('./types').LLMConversationMessage>(`/llm-messages/${messageId}`, {
       method: 'PATCH',
       body: JSON.stringify({ content }),
+    }),
+  deleteLLMConversationMessages: (conversationId: string, messageIds: string[]) =>
+    request<{ deleted: number }>(`/llm-conversations/${conversationId}/messages`, {
+      method: 'DELETE',
+      body: JSON.stringify({ message_ids: messageIds }),
     }),
   generateStream,
 }

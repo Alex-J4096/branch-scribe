@@ -176,6 +176,10 @@ type UpdateConversationMessageRequest struct {
 	Content string `json:"content"`
 }
 
+type DeleteConversationMessagesRequest struct {
+	MessageIDs []string `json:"message_ids"`
+}
+
 type GenerationRun struct {
 	ID                   string          `json:"id"`
 	ProjectID            string          `json:"project_id"`

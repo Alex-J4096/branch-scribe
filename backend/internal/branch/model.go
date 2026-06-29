@@ -10,6 +10,7 @@ import (
 var (
 	ErrInvalidBranch  = errors.New("branch name is required")
 	ErrBranchNotFound = errors.New("branch not found")
+	ErrBranchNotEmpty = errors.New("branch still contains blocks or child branches")
 )
 
 type Branch struct {

@@ -222,11 +222,23 @@ func (r *Repository) Get(ctx context.Context, branchID string) (Branch, error) {
 }
 
 func (r *Repository) Delete(ctx context.Context, branchID string) error {
-	tag, err := r.db.Exec(ctx, `DELETE FROM branches WHERE id = $1`, branchID)
+	tag, err := r.db.Exec(ctx, `
+		DELETE FROM branches
+		WHERE id = $1
+		  AND NOT EXISTS (SELECT 1 FROM blocks WHERE branch_id = $1)
+		  AND NOT EXISTS (SELECT 1 FROM branches WHERE base_branch_id = $1)
+	`, branchID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := r.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM branches WHERE id = $1)`, branchID).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return ErrBranchNotEmpty
+		}
 		return ErrBranchNotFound
 	}
 	return nil

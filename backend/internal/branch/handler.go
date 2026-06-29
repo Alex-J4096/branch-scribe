@@ -107,6 +107,8 @@ func respondBranchError(c *gin.Context, err error, code string, message string) 
 		api.RespondError(c, http.StatusBadRequest, "INVALID_BRANCH_REQUEST", err.Error())
 	case errors.Is(err, ErrBranchNotFound):
 		api.RespondError(c, http.StatusNotFound, "BRANCH_NOT_FOUND", "branch not found")
+	case errors.Is(err, ErrBranchNotEmpty):
+		api.RespondError(c, http.StatusConflict, "BRANCH_NOT_EMPTY", err.Error())
 	default:
 		api.RespondError(c, http.StatusInternalServerError, code, message)
 	}

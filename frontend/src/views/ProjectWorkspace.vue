@@ -12,6 +12,7 @@ import {
   Link2,
   MapPin,
   Move,
+  Pencil,
   ExternalLink,
   PanelLeftClose,
   PanelLeftOpen,
@@ -50,6 +51,10 @@ const selectedEdgeType = ref<GraphEdge['edge_type']>('next')
 const selectedEdgeLabel = ref('')
 const selectedSummaryModelProfileId = ref('')
 const branchSummaryError = ref('')
+const isEditingBranch = ref(false)
+const branchEditName = ref('')
+const branchEditDescription = ref('')
+const branchActionError = ref('')
 const isLeftDrawerOpen = ref(true)
 const isToolWindowOpen = ref(true)
 const activeWorkspacePanel = ref<'sidebar' | 'editor' | 'llm'>('editor')
@@ -109,6 +114,12 @@ const selectedBranchSummary = computed(() =>
   (summariesQuery.data.value ?? []).find(
     (summary) => summary.target_type === 'branch' && summary.target_id === selectedBranchId.value,
   ) ?? null,
+)
+const selectedBranch = computed(() =>
+  branches.value.find((branch) => branch.id === selectedBranchId.value) ?? null,
+)
+const selectedBranchBlockCount = computed(() =>
+  blocks.value.filter((block) => block.branch_id === selectedBranchId.value).length,
 )
 
 function branchSummaryStatus(branchId: string) {
@@ -199,9 +210,65 @@ const deleteBlock = useMutation({
 
 const archiveBranch = useMutation({
   mutationFn: (branchId: string) => api.updateBranch(branchId, { status: 'archived' }),
-  onSuccess: async () => {
-    selectedBranchId.value = branches.value.find((branch) => branch.status === 'active')?.id ?? null
+  onSuccess: async (_branch, archivedBranchId) => {
+    selectedBranchId.value = branches.value.find(
+      (branch) => branch.id !== archivedBranchId && branch.status === 'active',
+    )?.id ?? archivedBranchId
     await queryClient.invalidateQueries({ queryKey: ['branches', projectId.value] })
+  },
+})
+
+function beginEditBranch() {
+  if (!selectedBranch.value) return
+  branchEditName.value = selectedBranch.value.name
+  branchEditDescription.value = selectedBranch.value.description ?? ''
+  branchActionError.value = ''
+  isEditingBranch.value = true
+}
+
+const updateSelectedBranch = useMutation({
+  mutationFn: () => {
+    if (!selectedBranchId.value) throw new Error('请先选择分支')
+    const name = branchEditName.value.trim()
+    if (!name) throw new Error('分支名称不能为空')
+    return api.updateBranch(selectedBranchId.value, {
+      name,
+      description: branchEditDescription.value.trim(),
+    })
+  },
+  onSuccess: async () => {
+    isEditingBranch.value = false
+    branchActionError.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['branches', projectId.value] })
+  },
+  onError: (error) => {
+    branchActionError.value = error instanceof Error ? error.message : '保存分支失败'
+  },
+})
+
+const restoreBranch = useMutation({
+  mutationFn: (branchId: string) => api.updateBranch(branchId, { status: 'active' }),
+  onSuccess: async () => {
+    await queryClient.invalidateQueries({ queryKey: ['branches', projectId.value] })
+  },
+})
+
+const deleteSelectedBranch = useMutation({
+  mutationFn: async () => {
+    if (!selectedBranchId.value || !selectedBranch.value) throw new Error('请先选择分支')
+    if (selectedBranchBlockCount.value > 0) throw new Error('只能删除不含节点的空分支')
+    if (!window.confirm(`确定永久删除空分支“${selectedBranch.value.name}”吗？`)) return null
+    return api.deleteBranch(selectedBranchId.value)
+  },
+  onSuccess: async (result) => {
+    if (!result) return
+    selectedBranchId.value = null
+    isEditingBranch.value = false
+    branchActionError.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['branches', projectId.value] })
+  },
+  onError: (error) => {
+    branchActionError.value = error instanceof Error ? error.message : '删除分支失败'
   },
 })
 
@@ -460,14 +527,54 @@ async function refreshWorkspace() {
               <small>{{ branch.status }} · {{ branchSummaryStatus(branch.id) }}</small>
             </button>
             <button
-              v-if="selectedBranchId && branches.find((branch) => branch.id === selectedBranchId)?.status === 'active'"
+              v-if="selectedBranch?.status === 'active'"
               class="button"
               type="button"
               :disabled="archiveBranch.isPending.value"
-              @click="archiveBranch.mutate(selectedBranchId)"
+              @click="archiveBranch.mutate(selectedBranch.id)"
             >
               归档当前分支
             </button>
+            <div v-if="selectedBranch" class="branch-management">
+              <div class="branch-management__actions">
+                <button class="button" type="button" @click="beginEditBranch">
+                  <Pencil :size="14" aria-hidden="true" />编辑分支
+                </button>
+                <button
+                  v-if="selectedBranch.status === 'archived'"
+                  class="button"
+                  type="button"
+                  :disabled="restoreBranch.isPending.value"
+                  @click="restoreBranch.mutate(selectedBranch.id)"
+                >
+                  恢复分支
+                </button>
+                <button
+                  v-if="selectedBranchBlockCount === 0"
+                  class="button button--danger"
+                  type="button"
+                  :disabled="deleteSelectedBranch.isPending.value"
+                  @click="deleteSelectedBranch.mutate()"
+                >
+                  <Trash2 :size="14" aria-hidden="true" />删除空分支
+                </button>
+              </div>
+              <form v-if="isEditingBranch" class="branch-edit-form" @submit.prevent="updateSelectedBranch.mutate()">
+                <label class="field-label">
+                  <span>名称</span>
+                  <input v-model="branchEditName" maxlength="120" />
+                </label>
+                <label class="field-label">
+                  <span>说明</span>
+                  <textarea v-model="branchEditDescription" rows="3"></textarea>
+                </label>
+                <div class="branch-management__actions">
+                  <button class="button button--primary" type="submit" :disabled="updateSelectedBranch.isPending.value">保存</button>
+                  <button class="button" type="button" @click="isEditingBranch = false">取消</button>
+                </div>
+              </form>
+              <div v-if="branchActionError" class="llm-message llm-message--error">{{ branchActionError }}</div>
+            </div>
             <div v-if="selectedBranchId" class="branch-summary-actions">
               <div v-if="selectedBranchSummary?.status === 'stale'" class="llm-message llm-message--warning">
                 分支正文已变化，摘要需要刷新。

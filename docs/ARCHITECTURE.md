@@ -20,26 +20,30 @@ BranchScribe 是一个基于 LLM API 的非线性小说撰写工具。
 
 ---
 
-## 2. 项目目标
+## 2. 项目目标与当前状态
 
-### 2.1 核心目标
+### 2.1 已落地的核心能力
 
-实现一个可以用于实际小说创作的 LLM 写作 IDE，支持：
+当前版本已经形成可运行的 LLM 小说写作 IDE，已支持：
 
 1. 将小说拆分为多个 block。
 2. 每个 block 支持多版本 revision。
 3. 用户可以 fork 一个 block，生成不同走向。
 4. 用户可以比较两个 revision，选择一个继续写作。
-5. 用户可以对 block 进行续写、改写、局部修改、扩写、缩写。
+5. 用户可以通过可编辑 Prompt 操作对 block 进行自由生成、续写、改写、局部修改、扩写、缩写和润色。
 6. 用户可以管理角色设定、世界观设定、地点设定、事件设定。
-7. 系统可以根据当前写作位置自动构建 LLM 上下文。
-8. 长篇内容超过上下文限制时，系统自动使用摘要和记忆代替全文。
-9. 用户侧始终能看到完整正文，LLM 侧看到经过压缩和编排的上下文。
+7. 系统可以根据当前写作位置、图上前文、Canon、摘要和 Memory 构建并预览 LLM 上下文。
+8. 上下文构建器会按模型窗口裁剪内容，并组合摘要、结构化设定和检索记忆。
+9. 用户侧保留完整正文，LLM 侧接收经过选择和编排的上下文。
 10. 支持配置模型参数，例如 temperature、top_p、max_tokens、context_window 等。
+11. 支持角色状态、伏笔、故事时间线和设定一致性检查。
+12. 支持 Branch/Chapter Markdown 导出和项目 JSON 备份、恢复。
 
-### 2.2 非目标
+摘要过期后的自动重建、复杂分支合并和更强的长篇自动编排仍属于后续增强项。
 
-MVP 阶段暂不做：
+### 2.2 当前版本非目标
+
+当前版本暂不做：
 
 * 本地 vLLM 部署。
 * Ollama 本地模型管理。
@@ -54,7 +58,9 @@ MVP 阶段暂不做：
 
 ---
 
-## 3. 推荐技术栈
+## 3. 已采用的技术栈
+
+以下为当前代码实际使用的技术方案，不再是候选推荐。
 
 ### 3.1 前端
 
@@ -66,27 +72,30 @@ MVP 阶段暂不做：
 * Pinia
 * Vue Router
 * TanStack Query for Vue
-* UnoCSS 或 Tailwind CSS
-* Monaco Editor，可选，用于 prompt 模板编辑
+* 原生 CSS
+* Lucide Vue Next
+
+当前未引入 UnoCSS、Tailwind CSS 和 Monaco Editor。
 
 ### 3.2 后端
 
 * Go
-* Gin 或 Echo
+* Gin
 * PostgreSQL
 * pgvector
-* Redis，可选，MVP 可以不引入
-* SSE 或 WebSocket，用于 LLM 流式输出
-* sqlc 或 Ent，用于数据库访问
-* Goose 或 Atlas，用于数据库迁移
+* pgxpool + 手写 SQL repository
+* SSE，用于 LLM 流式输出及独立 LLM 调试界面
+* SQL 初始化文件 + 启动时幂等兼容迁移
+
+当前未引入 Redis、sqlc、Ent、Goose 或 Atlas。
 
 ### 3.3 LLM API 层
 
-MVP 阶段建议先实现一个 Go 版本的 OpenAI-compatible client。
+当前已经实现 Go 版本的 OpenAI-compatible Provider，同时支持非流式与 SSE
+流式生成、reasoning/content 分离、token usage、超时和错误处理。
 
 后续可以扩展为多 Provider Adapter：
 
-* OpenAI-compatible Provider
 * OpenAI Provider
 * Anthropic Provider
 * Gemini Provider
@@ -94,11 +103,11 @@ MVP 阶段建议先实现一个 Go 版本的 OpenAI-compatible client。
 * DeepSeek Provider
 * Moonshot Provider
 
-MVP 不需要引入 vLLM、Ollama、LangGraph。
+当前未引入 vLLM、Ollama、LangGraph。
 
 ### 3.4 向量检索
 
-MVP 优先使用：
+当前使用：
 
 * PostgreSQL + pgvector
 
@@ -109,23 +118,26 @@ MVP 优先使用：
 * 便于用 SQL 过滤 project_id、entity_type、branch_id 等元数据。
 * 部署复杂度低。
 
-后期如果向量检索量变大，可以再接入 Qdrant。
+Memory 管理页已经支持 embedding、向量检索和 reindex；普通写作上下文中的
+Memory 自动召回目前使用关键词匹配。后期如数据量增长，可规划接入 Qdrant。
 
 ---
 
 ## 4. 总体架构
 
 ```text
-Frontend: Vue 3
+Frontend: Vue 3 + TypeScript + Vite
   ├── Project Workspace
   ├── Graph Canvas: Vue Flow
   ├── Block Editor: Tiptap
   ├── Revision Diff Viewer
-  ├── Context Preview Panel
+  ├── LLM Chatbox / Context Preview
+  ├── Canon / Memory / Timeline / Foreshadowing
+  ├── Export / Backup
   ├── Global Model Config
-  └── Canon / Memory Manager
+  └── LLM Debug Web UI（独立 Go 进程）
 
-Backend: Go API
+Backend: Go + Gin + pgxpool
   ├── Project Service
   ├── Graph Service
   ├── Block Service
@@ -136,7 +148,9 @@ Backend: Go API
   ├── Summary Service
   ├── Context Builder
   ├── LLM Gateway
-  └── Generation Run Recorder
+  ├── Story Engineering Service
+  ├── Transfer Service
+  └── Generation / Conversation Recorder
 
 Database: PostgreSQL + pgvector
   ├── projects
@@ -149,8 +163,15 @@ Database: PostgreSQL + pgvector
   ├── summary_snapshots
   ├── model_profiles
   ├── prompt_templates
-  └── generation_runs
+  ├── generation_runs
+  ├── llm_conversations / llm_messages
+  ├── character_states
+  ├── foreshadowings
+  └── timeline_events
 ```
+
+上述模块均已有代码和数据库结构。桌面端封装、多人协作、云同步及自动化
+Agent 不属于当前架构。
 
 ---
 
@@ -183,7 +204,7 @@ Branch 表示一条故事线。
 * 废案线
 * 第二结局线
 
-Branch 不应该复制整本小说，而是引用一组 block 路径。
+Branch 不复制整本小说，而是通过 Block 归属、父分支和图关系组织故事线。
 
 ### 5.3 Block
 
@@ -198,13 +219,13 @@ Block 是小说正文的最小创作单元。Block 可以只是片段，`title` 
 * canon
 * outline
 
-MVP 阶段建议主要支持 scene 和 chapter。
+前后端当前支持 scene、chapter、note、summary、canon 和 outline。
 
 ### 5.4 Revision
 
 Revision 是 block 的一个具体版本。
 
-每次用户手动修改、LLM 改写、LLM 续写，都应该生成一个新的 revision，而不是直接覆盖原文。
+每次用户手动保存或将 LLM 回复保存为正文时，系统都会创建新的 revision，而不是直接覆盖原文。
 
 这样可以支持：
 
@@ -227,13 +248,13 @@ Canon Entity 是硬设定。
 * 世界规则
 * 时间线事件
 
-这类内容不应该只靠向量检索，而应该结构化保存。
+这类内容已经通过 `canon_entities` 结构化保存，不只依赖向量检索。
 
 角色 Canon 可以从指定起始 Block 沿同一故事分支汇总后续正文，并由用户勾选最终纳入提取的 Block。LLM 输出先作为可编辑候选，确认后更新当前角色卡，同时向 `character_states` 追加完整快照；历史版本保存来源 Block 列表、模型与变化摘要，不覆盖旧快照。
 
 ### 5.6 Memory Chunk
 
-Memory Chunk 是可以被 RAG 检索的语义记忆。
+Memory Chunk 是可手动维护、从 Block 生成并可通过关键词或向量检索的语义记忆。
 
 例如：
 
@@ -248,19 +269,20 @@ Memory Chunk 是可以被 RAG 检索的语义记忆。
 
 Summary Snapshot 是对 block、chapter、branch、arc 或 character line 的摘要快照。
 
-摘要必须记录覆盖了哪些 revision，否则用户修改前文后，摘要可能过期。
+当前摘要会记录覆盖的 revision，并可手动生成或刷新。基于 revision 变化自动
+标记 stale 及按需自动重建仍是规划能力。
 
 ### 5.8 Generation Run
 
-Generation Run 记录一次 LLM 调用。
+Generation Run 已用于记录每次 LLM 调用。
 
 需要保存：
 
 * 使用的模型
 * 模型参数
 * prompt 模板
-* 输入上下文快照
-* 输出 revision
+* 输入上下文快照和最终 messages
+* 输出 revision 或 LLM conversation message 的关联
 * token 用量
 * 耗时
 * 错误信息
@@ -502,7 +524,9 @@ CREATE TABLE llm_messages (
 
 ---
 
-## 7. 后端模块设计
+## 7. 后端模块现状
+
+本节描述当前职责；明确标为“规划”的项目尚未落地。
 
 ### 7.1 Project Service
 
@@ -546,7 +570,7 @@ CREATE TABLE llm_messages (
 * 创建 revision
 * 查询 revision 列表
 * 查询 revision 详情
-* 对比两个 revision
+* 为前端文本 diff 提供 revision 数据
 * 回滚到指定 revision
 * 将某个 revision 设置为当前版本
 
@@ -559,7 +583,7 @@ CREATE TABLE llm_messages (
 * 查询 branch 列表
 * 查询 branch path
 * 归档 branch
-* 合并 branch，MVP 可只做手动合并
+* 规划：合并 branch；当前仅支持用户手动整理正文
 
 ### 7.6 Canon Service
 
@@ -569,7 +593,7 @@ CREATE TABLE llm_messages (
 * 编辑 canon entity
 * 查询 canon entity
 * 根据类型、标签、名称检索 canon entity
-* 为 canon entity 生成 embedding
+* 保存 canon entity 的结构化信息和 Block 关联
 * 标记 canon entity 状态：canon、draft、deprecated
 
 ### 7.7 Memory Service
@@ -577,10 +601,10 @@ CREATE TABLE llm_messages (
 负责：
 
 * 从 block revision 生成 memory chunk
-* 从 summary 生成 memory chunk
 * 手动创建 memory chunk
 * 语义检索 memory chunk
-* 通过 project_id、branch_id、tags、chunk_kind 过滤记忆
+* 重建 embedding 索引
+* 通过 project_id、tags、chunk_kind 等条件过滤记忆
 
 ### 7.8 Summary Service
 
@@ -589,13 +613,13 @@ CREATE TABLE llm_messages (
 * 为 block 生成摘要
 * 为 chapter 生成摘要
 * 为 branch 生成摘要
-* 检查摘要是否过期
-* 当 covered_revision_ids 发生变化时，将旧摘要标记为 stale
-* 按需重新生成摘要
+* 保存摘要覆盖的 revision
+* 手动刷新摘要
+* 规划：revision 变化时自动标记 stale，并在需要时自动重新生成
 
 ### 7.9 Context Builder
 
-这是项目的核心模块。
+这是项目的核心模块，已经用于生成、上下文预览和 LLM Chatbox。
 
 输入：
 
@@ -642,19 +666,20 @@ CREATE TABLE llm_messages (
 }
 ```
 
-Context Builder 需要根据 task_type 决定上下文策略。
+Context Builder 已根据 task_type、Prompt Template、图上前文范围、临时排除项
+和模型窗口决定上下文策略。
 
 ---
 
 ## 8. LLM 任务类型
 
-MVP 阶段支持以下任务：
+当前 Prompt 操作与专用生成接口覆盖以下任务；标为“规划”的任务尚未实现。
 
 ### 8.1 free_write
 
 完全根据用户指令生成正文，不读取当前 block 正文。
 
-上下文应包含：
+当前上下文包含：
 
 * 项目简介
 * 用户指令
@@ -663,7 +688,7 @@ MVP 阶段支持以下任务：
 
 续写当前 block 或从当前 block 创建下一个 block。
 
-上下文应包含：
+根据项目资料和用户选择，当前上下文可包含：
 
 * 当前 block 正文
 * 前 1 到 3 个 block 正文
@@ -678,7 +703,7 @@ MVP 阶段支持以下任务：
 
 重写整个 block。
 
-上下文应包含：
+根据项目资料和用户选择，当前上下文可包含：
 
 * 原 block 正文
 * 用户改写要求
@@ -690,7 +715,7 @@ MVP 阶段支持以下任务：
 
 局部修改。
 
-上下文应包含：
+根据项目资料和用户选择，当前上下文可包含：
 
 * 原 block 全文
 * 用户选中的文本
@@ -698,7 +723,7 @@ MVP 阶段支持以下任务：
 * 用户修改要求
 * 不能改变的 canon facts
 
-输出应该只返回替换后的局部文本，或者返回结构化 JSON：
+Prompt 默认要求仅返回替换后的局部文本；未来也可扩展为结构化 JSON：
 
 ```json
 {
@@ -721,6 +746,9 @@ MVP 阶段支持以下任务：
 
 ### 8.8 compare_revisions
 
+规划：使用 LLM 从以下维度比较两个 revision。当前版本已提供本地文本 Diff，
+尚未实现该 LLM 评价任务。
+
 比较两个 revision。
 
 输出评价维度：
@@ -733,7 +761,7 @@ MVP 阶段支持以下任务：
 * 可继续展开性
 * 推荐选择
 
-### 8.8 check_consistency
+### 8.9 check_consistency
 
 检查设定冲突。
 
@@ -752,7 +780,7 @@ MVP 阶段支持以下任务：
 }
 ```
 
-### 8.9 summarize
+### 8.10 summarize
 
 生成摘要。
 
@@ -765,9 +793,9 @@ MVP 阶段支持以下任务：
 
 ---
 
-## 9. LLM Provider 设计
+## 9. LLM Provider 实现
 
-### 9.1 接口设计
+### 9.1 当前接口
 
 ```go
 type ChatMessage struct {
@@ -799,9 +827,9 @@ type LLMProvider interface {
 }
 ```
 
-### 9.2 MVP Provider
+### 9.2 当前 Provider
 
-先实现 OpenAI-compatible provider。
+已实现 OpenAI-compatible provider。
 
 支持：
 
@@ -813,9 +841,12 @@ type LLMProvider interface {
 * max_tokens
 * stream
 
-Provider 列表包含 OpenAI-compatible、OpenAI、OpenRouter、DeepSeek、Moonshot、SiliconFlow 等。
+Provider 配置列表包含 OpenAI-compatible、OpenAI、OpenRouter、DeepSeek、
+Moonshot、SiliconFlow 等；它们当前统一走 Chat Completions 兼容协议，并非
+各自独立的原生 SDK Adapter。
 
-前端允许用户创建多个 model profile。
+Model Profile 已调整为全局配置，前端允许用户创建多个 profile，各项目可选择
+默认 profile，每次生成也可临时选择。
 
 例如：
 
@@ -838,7 +869,8 @@ Provider 列表包含 OpenAI-compatible、OpenAI、OpenRouter、DeepSeek、Moons
 
 ### 10.1 Token Budget
 
-Context Builder 应根据模型 context_window 分配预算。
+Context Builder 当前根据模型 `context_window` 估算 token，并按优先级装配和
+裁剪上下文。以下比例是设计参考，并非当前实现中的固定硬配额：
 
 默认比例：
 
@@ -880,70 +912,66 @@ retrieved memories: 10%
 }
 ```
 
-Context Builder 应直接加载这两个角色和地点，而不是只靠 embedding 相似度搜索。
+Context Builder 会根据 Block 关联直接加载角色、地点和全局规则；普通写作的
+Memory 自动召回目前使用关键词匹配，管理页的语义搜索使用 embedding。
 
 ### 10.4 摘要失效机制
 
-当某个 block 创建了新的 current revision 后：
+规划中的完整自动失效流程是：
 
 1. 找出所有覆盖旧 revision 的 summary_snapshots。
 2. 将这些 summary 标记为 stale。
 3. 在下次生成前，如果需要该摘要，则触发重新摘要。
-4. MVP 阶段可以先手动刷新摘要，后续再做自动刷新。
+4. 在生成前按需重新摘要。
+
+当前已保存 `covered_revision_ids` 并提供手动刷新，自动 stale 标记与按需重建
+尚未落地。
 
 ---
 
-## 11. 前端界面设计
+## 11. 前端界面现状
 
 ### 11.1 主布局
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ Top Bar: Project / Branch / Model Profile / Save Status       │
+│ Top Bar: Project / Feature Entries / Floating Block Tools      │
 ├───────────────┬──────────────────────────┬───────────────────┤
 │ Left Sidebar  │ Graph Canvas              │ Right Inspector   │
 │               │                          │                   │
-│ Project Tree  │ Vue Flow Nodes            │ Block Editor      │
-│ Branches      │ Block Connections         │ Revision List     │
-│ Canon          │ Story Branches            │ LLM Actions       │
-│ Memory         │                          │ Context Preview   │
+│ Branches      │ Vue Flow Nodes            │ Block Editor      │
+│ Block List    │ Block Connections         │ Revision / Diff   │
+│ Create Edge   │ Story Branches            │ LLM Chatbox       │
+│               │                           │ Context Preview   │
 └───────────────┴──────────────────────────┴───────────────────┘
 ```
 
 ### 11.2 左侧栏
 
-功能：
+当前工作台左侧抽屉包含：
 
-* 项目列表
 * 分支列表
-* 章节列表
-* 角色设定
-* 世界观设定
-* 地点设定
-* 伏笔列表，Phase 3
-* 摘要列表
+* 新建 Block
+* Block 列表
+* Edge 备用创建表单
+
+项目列表、全局模型配置、Canon、Memory、伏笔、时间线和导出备份使用独立页面
+或工作台入口，不放入同一侧栏。
 
 ### 11.3 中间蓝图画布
 
 使用 Vue Flow。
 
-节点类型：
+当前画布展示数据库中的 Block，主要类型包括：
 
 * Chapter Node
 * Scene Block Node
-* Fork Node
-* Summary Node
-* Canon Node，可选
+* Note / Summary / Canon / Outline Block
 
-节点显示：
+当前节点主要显示：
 
 * 标题
 * 类型
-* 字数
-* 当前 revision 数量
-* 是否有摘要
-* 是否存在设定冲突
-* 是否已过期
 
 边类型：
 
@@ -962,13 +990,13 @@ Context Builder 应直接加载这两个角色和地点，而不是只靠 embedd
 * revision 列表
 * 当前 revision
 * LLM 操作按钮
-* 模型参数覆盖设置
-* 上下文预览
-* 生成记录
+* 一致性检查
+
+LLM Chatbox 和上下文预览位于 Block 工具中，并支持独立工具页和浮动窗口。
 
 ### 11.5 LLM 操作按钮
 
-MVP 支持：
+当前 Prompt 操作库默认支持：
 
 * 续写
 * 改写
@@ -976,20 +1004,19 @@ MVP 支持：
 * 扩写
 * 缩写
 * 润色
-* 生成两个候选版本
-* 比较两个版本
-* 生成摘要
+* 双版本候选生成
+
+摘要、一致性检查等专用能力由各自面板触发。Revision 对比由 Diff Viewer
+完成。
 
 ### 11.6 Diff Viewer
 
 用于比较两个 revision。
 
-可以先使用文本 diff，后续再做富文本 diff。
+当前已经实现纯文本 diff：先将 HTML 转为纯文本，再按中文字符、英文词、
+数字和标点进行 LCS 对比。富文本结构化 diff 仍是后续增强项。
 
-MVP 推荐库：
-
-* diff-match-patch
-* jsdiff
+当前没有引入 diff-match-patch 或 jsdiff。
 
 ---
 
@@ -1224,22 +1251,21 @@ Prompt Template 支持变量：
 
 ---
 
-## 14. 推荐仓库结构
+## 14. 当前仓库结构
 
 ```text
 branchscribe/
   README.md
   docs/
-    development.md
-    api.md
-    database.md
-    prompt-templates.md
+    ARCHITECTURE.md
+    DEVELOPMENT_LOG.md
+    MEMORY_FEATURES_GUIDE.md
   frontend/
     package.json
     vite.config.ts
     src/
       main.ts
-      app.vue
+      App.vue
       router/
       stores/
       api/
@@ -1247,13 +1273,16 @@ branchscribe/
         graph/
         editor/
         inspector/
-        diff/
-        canon/
-        memory/
       views/
         ProjectWorkspace.vue
         ProjectList.vue
-      types/
+        BlockTool.vue
+        CanonManager.vue
+        MemoryManager.vue
+        ForeshadowingManager.vue
+        TimelineManager.vue
+        TransferManager.vue
+        ModelProfileSettings.vue
   backend/
     go.mod
     cmd/
@@ -1262,20 +1291,17 @@ branchscribe/
     internal/
       config/
       database/
-      middleware/
-      llm/
+      api/
       project/
       branch/
       block/
-      revision/
       graph/
       canon/
       memory/
-      summary/
-      contextbuilder/
       generation/
+      story/
+      transfer/
     migrations/
-    tests/
   docker-compose.yml
   .env.example
   .gitignore
@@ -1503,6 +1529,8 @@ branchscribe/
 * [x] 保留终端概要日志，并补充 Web 调试界面测试与启动说明。
 * [x] 将调试界面调整为明亮主题与更直观的信息层级。
 * [x] 同时提供易读的渲染视图和完整 Metadata / 原始 JSON 查看。
+* [x] 修复 LLM 流式生成期间已落库 User 消息与本地 pending 消息重复显示的问题。
+* [x] 为单版本发送入口增加同步防重锁，避免快速重复触发真实请求。
 
 ### 验收标准
 
@@ -1607,6 +1635,8 @@ branchscribe/
 * [x] 支持在 Chatbox 底栏开启双版本模式，使每次提交生成两个候选回复。
 * [x] 统一 Chatbox 输入与消息正文样式，Agent 回复展示模型名称。
 * [x] user/assistant 消息均支持从操作栏原位重新生成对应回复，工具悬停时展示名称。
+* [x] 重新生成历史消息时严格截断目标 User 之后的对话，不向 LLM 携带原回复及后续轮次。
+* [x] 支持多选 User / Agent 对话消息并批量删除持久化记录。
 * [x] 流式生成完成后切换为带模型信息、可编辑的持久化 assistant 消息。
 * [x] 正文与 LLM 独立标签移除重复折叠标题，并撑满 Block 工具可用区域且只保留内容滚动。
 * [x] 以 LLM Chatbox 的工具型视觉密度统一项目页、主工作台、Block 工具及设置管理页面。
@@ -1692,6 +1722,11 @@ branchscribe/
 * [x] 支持候选版本并排比较。
 * [x] 支持选择某个候选版本继续故事线。
 * [x] 支持归档不使用的 branch。
+* [x] 支持编辑 branch 名称与说明、恢复归档 branch 和删除空 branch。
+
+### 分支维护补充任务
+
+* [x] 删除 branch 时禁止遗留无所属节点，并阻止删除仍被子分支引用的 branch。
 
 ### 验收标准
 
@@ -1738,6 +1773,11 @@ branchscribe/
 * [x] 系统可以指出潜在设定冲突。
 * [x] 用户可以维护伏笔列表。
 * [x] 用户可以维护角色状态。
+
+### 文档任务
+
+* [x] 编写角色卡、地点卡、规则、Memory、角色状态、伏笔与时间线的工作原理和使用说明。
+* [x] 按当前实现整理架构、技术栈、模块职责和前端界面等规划性描述。
 
 ---
 

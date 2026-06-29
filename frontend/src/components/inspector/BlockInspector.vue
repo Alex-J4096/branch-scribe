@@ -70,8 +70,11 @@ const generateTwoVersions = ref(false)
 const contextNodeCount = ref(1)
 const selectedConversationId = ref('')
 const pendingUserMessage = ref('')
+const pendingUserMessageBaselineIds = ref<string[]>([])
 const editingMessageId = ref('')
 const editingMessageContent = ref('')
+const isSelectingMessages = ref(false)
+const selectedMessageIds = ref<string[]>([])
 const savingMessageRevisionId = ref('')
 const regeneratingMessageId = ref('')
 const copiedMessageKey = ref('')
@@ -103,6 +106,7 @@ const summaryError = ref('')
 const consistencyResult = ref<ConsistencyCheckResult | null>(null)
 const consistencyError = ref('')
 const isGenerationStreaming = ref(false)
+const isGenerationStarting = ref(false)
 const draftSavedAt = ref<string | null>(null)
 const restoredLocalDraft = ref(false)
 const openSections = ref({
@@ -185,6 +189,17 @@ const characters = computed(() => charactersQuery.data.value ?? [])
 const locations = computed(() => locationsQuery.data.value ?? [])
 const conversations = computed(() => conversationsQuery.data.value ?? [])
 const conversationMessages = computed(() => conversationMessagesQuery.data.value ?? [])
+const showPendingUserMessage = computed(() => {
+  const content = pendingUserMessage.value.trim()
+  if (!content) return false
+  const baselineIds = new Set(pendingUserMessageBaselineIds.value)
+  return !conversationMessages.value.some(
+    (message) =>
+      message.role === 'user'
+      && message.content.trim() === content
+      && !baselineIds.has(message.id),
+  )
+})
 const currentRevision = computed(() => blockDetail.value?.current_revision ?? null)
 const currentSummary = computed(() => {
   const block = blockDetail.value?.block
@@ -363,6 +378,7 @@ watch(selectedConversationId, () => {
   streamingOutput.value = ''
   reasoningOutput.value = ''
   pendingUserMessage.value = ''
+  pendingUserMessageBaselineIds.value = []
   editingMessageId.value = ''
 })
 
@@ -384,9 +400,17 @@ watch(
     editorSelectedText.value = ''
     selectedConversationId.value = ''
     pendingUserMessage.value = ''
+    pendingUserMessageBaselineIds.value = []
     editingMessageId.value = ''
+    isSelectingMessages.value = false
+    selectedMessageIds.value = []
   },
 )
+
+watch(selectedConversationId, () => {
+  isSelectingMessages.value = false
+  selectedMessageIds.value = []
+})
 
 watch(
   () => props.mode,
@@ -425,6 +449,24 @@ const updateConversationMessage = useMutation({
       queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] }),
       queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] }),
     ])
+  },
+})
+
+const deleteConversationMessages = useMutation({
+  mutationFn: () => api.deleteLLMConversationMessages(selectedConversationId.value, selectedMessageIds.value),
+  onSuccess: async () => {
+    selectedMessageIds.value = []
+    isSelectingMessages.value = false
+    generationResult.value = null
+    streamingOutput.value = ''
+    reasoningOutput.value = ''
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] }),
+      queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] }),
+    ])
+  },
+  onError: (error) => {
+    generationError.value = error instanceof Error ? error.message : '删除消息失败'
   },
 })
 
@@ -938,7 +980,7 @@ function toggleSection(section: keyof typeof openSections.value) {
 }
 
 async function startGenerationStream(regeneration?: { instruction: string; messageId: string }) {
-  if (!canGenerate.value || isGenerationStreaming.value) return
+  if (!canGenerate.value || isGenerationStreaming.value || isGenerationStarting.value) return
   const instruction = regeneration?.instruction.trim() ?? generationInstruction.value.trim()
   if (!instruction) {
     generationError.value = '请输入想和 Agent 讨论或执行的内容'
@@ -951,25 +993,27 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
     return
   }
 
-  if (!selectedConversationId.value) {
-    const conversation = await api.createLLMConversation(props.blockId, { project_id: props.projectId })
-    selectedConversationId.value = conversation.id
-    await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
-  } else {
-    await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
-  }
-
-  generationAbortController = new AbortController()
-  isGenerationStreaming.value = true
-  generationError.value = ''
-  generationResult.value = null
-  streamingOutput.value = ''
-  reasoningOutput.value = ''
-  regeneratingMessageId.value = regeneration?.messageId ?? ''
-  pendingUserMessage.value = regeneration ? '' : instruction
-  if (!regeneration) generationInstruction.value = ''
-
+  isGenerationStarting.value = true
+  pendingUserMessageBaselineIds.value = conversationMessages.value.map((message) => message.id)
   try {
+    if (!selectedConversationId.value) {
+      const conversation = await api.createLLMConversation(props.blockId, { project_id: props.projectId })
+      selectedConversationId.value = conversation.id
+      await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
+    } else {
+      await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
+    }
+
+    generationAbortController = new AbortController()
+    isGenerationStreaming.value = true
+    generationError.value = ''
+    generationResult.value = null
+    streamingOutput.value = ''
+    reasoningOutput.value = ''
+    regeneratingMessageId.value = regeneration?.messageId ?? ''
+    pendingUserMessage.value = regeneration ? '' : instruction
+    if (!regeneration) generationInstruction.value = ''
+
     await api.generateStream(
       buildGenerateInput(instruction, regeneration?.messageId),
       (event) => {
@@ -999,6 +1043,7 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
             excludedContextItemIds.value = event.context_preview.excluded_item_ids
           }
           pendingUserMessage.value = ''
+          pendingUserMessageBaselineIds.value = []
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] }),
             queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] }),
@@ -1018,7 +1063,6 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
       generationError.value = error instanceof Error ? error.message : '生成失败'
     }
   } finally {
-    isGenerationStreaming.value = false
     if (generationResult.value && selectedConversationId.value) {
       await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
       streamingOutput.value = ''
@@ -1027,7 +1071,12 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
     if (regeneration) {
       regeneratingMessageId.value = ''
     }
+    if (!pendingUserMessage.value) {
+      pendingUserMessageBaselineIds.value = []
+    }
     generationAbortController = null
+    isGenerationStarting.value = false
+    isGenerationStreaming.value = false
   }
 }
 
@@ -1122,8 +1171,36 @@ function cancelEditMessage() {
   editingMessageContent.value = ''
 }
 
+function toggleMessageSelection(messageId: string) {
+  const selected = new Set(selectedMessageIds.value)
+  if (selected.has(messageId)) {
+    selected.delete(messageId)
+  } else {
+    selected.add(messageId)
+  }
+  selectedMessageIds.value = Array.from(selected)
+}
+
+function beginMessageSelection() {
+  cancelEditMessage()
+  selectedMessageIds.value = []
+  isSelectingMessages.value = true
+}
+
+function cancelMessageSelection() {
+  isSelectingMessages.value = false
+  selectedMessageIds.value = []
+}
+
+function confirmDeleteSelectedMessages() {
+  const count = selectedMessageIds.value.length
+  if (!count || !selectedConversationId.value) return
+  if (!window.confirm(`确定删除选中的 ${count} 条消息吗？此操作不可恢复。`)) return
+  deleteConversationMessages.mutate()
+}
+
 function regenerateMessage(message: LLMConversationMessage) {
-  if (isGenerationStreaming.value || generateCandidates.isPending.value) return
+  if (isGenerationStreaming.value || isGenerationStarting.value || generateCandidates.isPending.value) return
   const messageIndex = conversationMessages.value.findIndex((item) => item.id === message.id)
   const target = message.role === 'assistant'
     ? message
@@ -1141,7 +1218,7 @@ function regenerateMessage(message: LLMConversationMessage) {
 function submitComposer() {
   if (generateTwoVersions.value) {
     if (!generateCandidates.isPending.value) generateCandidates.mutate()
-  } else if (!isGenerationStreaming.value) {
+  } else if (!isGenerationStreaming.value && !isGenerationStarting.value) {
     void startGenerationStream()
   }
 }
@@ -1467,7 +1544,11 @@ function replaceEditorSelectionWithGeneratedContent() {
           </span>
           <Bot :size="16" aria-hidden="true" />
         </button>
-        <div v-show="props.mode === 'llm' || openSections.llm" class="inspector-section__body llm-panel llm-chat">
+        <div
+          v-show="props.mode === 'llm' || openSections.llm"
+          class="inspector-section__body llm-panel llm-chat"
+          :class="{ 'llm-chat--selecting': isSelectingMessages }"
+        >
           <header class="llm-chat__header">
             <select v-model="selectedConversationId" aria-label="选择对话">
               <option value="">新对话</option>
@@ -1481,6 +1562,15 @@ function replaceEditorSelectionWithGeneratedContent() {
             <button
               class="icon-button"
               type="button"
+              :title="isSelectingMessages ? '取消选择' : '多选消息'"
+              :disabled="!conversationMessages.length || isGenerationStreaming || isGenerationStarting"
+              @click="isSelectingMessages ? cancelMessageSelection() : beginMessageSelection()"
+            >
+              <Check :size="16" aria-hidden="true" />
+            </button>
+            <button
+              class="icon-button"
+              type="button"
               title="删除当前对话"
               :disabled="!selectedConversationId"
               @click="selectedConversationId && deleteConversation.mutate(selectedConversationId)"
@@ -1488,6 +1578,22 @@ function replaceEditorSelectionWithGeneratedContent() {
               <Trash2 :size="16" aria-hidden="true" />
             </button>
           </header>
+
+          <div v-if="isSelectingMessages" class="llm-chat__selection-bar">
+            <span>已选择 {{ selectedMessageIds.length }} 条</span>
+            <div>
+              <button class="button" type="button" @click="cancelMessageSelection">取消</button>
+              <button
+                class="button button--danger"
+                type="button"
+                :disabled="!selectedMessageIds.length || deleteConversationMessages.isPending.value"
+                @click="confirmDeleteSelectedMessages"
+              >
+                <Trash2 :size="14" aria-hidden="true" />
+                删除
+              </button>
+            </div>
+          </div>
 
           <div class="llm-chat__messages">
             <div v-if="!conversationMessages.length && !pendingUserMessage && !streamingOutput" class="llm-chat__empty">
@@ -1500,10 +1606,25 @@ function replaceEditorSelectionWithGeneratedContent() {
               v-for="message in conversationMessages"
               :key="message.id"
               class="chat-message"
-              :class="`chat-message--${message.role}`"
+              :class="[`chat-message--${message.role}`, { 'chat-message--selected': selectedMessageIds.includes(message.id) }]"
+              :role="isSelectingMessages ? 'button' : undefined"
+              :tabindex="isSelectingMessages ? 0 : undefined"
+              :aria-pressed="isSelectingMessages ? selectedMessageIds.includes(message.id) : undefined"
+              @click="isSelectingMessages && toggleMessageSelection(message.id)"
+              @keydown.enter.prevent="isSelectingMessages && toggleMessageSelection(message.id)"
+              @keydown.space.prevent="isSelectingMessages && toggleMessageSelection(message.id)"
             >
               <div class="chat-message__role">
-                {{ message.role === 'user' ? '你' : `Agent${message.model ? ` · ${message.model}` : ''}` }}
+                <label v-if="isSelectingMessages" class="chat-message__selector" @click.stop>
+                  <input
+                    type="checkbox"
+                    :checked="selectedMessageIds.includes(message.id)"
+                    :aria-label="`选择${message.role === 'user' ? '用户' : 'Agent'}消息`"
+                    @change="toggleMessageSelection(message.id)"
+                  >
+                  <span aria-hidden="true"></span>
+                </label>
+                <span>{{ message.role === 'user' ? '你' : `Agent${message.model ? ` · ${message.model}` : ''}` }}</span>
               </div>
               <template v-if="editingMessageId === message.id">
                 <textarea v-model="editingMessageContent" class="chat-message__editor" rows="5" />
@@ -1517,7 +1638,7 @@ function replaceEditorSelectionWithGeneratedContent() {
                 <div class="chat-message__content">
                   {{ regeneratingMessageId === message.id ? (streamingOutput || '正在重新生成…') : message.content }}
                 </div>
-                <div class="chat-message__actions">
+                <div v-if="!isSelectingMessages" class="chat-message__actions">
                   <button
                     class="chat-message__action"
                     type="button"
@@ -1562,7 +1683,7 @@ function replaceEditorSelectionWithGeneratedContent() {
               </template>
             </article>
 
-            <article v-if="pendingUserMessage" class="chat-message chat-message--user">
+            <article v-if="showPendingUserMessage" class="chat-message chat-message--user">
               <div class="chat-message__role">你</div>
               <div class="chat-message__content">{{ pendingUserMessage }}</div>
             </article>
@@ -1756,10 +1877,10 @@ function replaceEditorSelectionWithGeneratedContent() {
                 class="llm-composer__send"
                 type="button"
                 :title="generateTwoVersions ? '生成两个版本' : '发送'"
-                :disabled="!canGenerate || !generationInstruction.trim() || generateCandidates.isPending.value"
+                :disabled="!canGenerate || !generationInstruction.trim() || isGenerationStarting || generateCandidates.isPending.value"
                 @click="submitComposer"
               >
-                <RefreshCw v-if="generateCandidates.isPending.value" class="spin" :size="16" aria-hidden="true" />
+                <RefreshCw v-if="isGenerationStarting || generateCandidates.isPending.value" class="spin" :size="16" aria-hidden="true" />
                 <CopyPlus v-else-if="generateTwoVersions" :size="16" aria-hidden="true" />
                 <Send v-else :size="17" aria-hidden="true" />
               </button>
