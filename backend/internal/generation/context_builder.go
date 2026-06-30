@@ -58,6 +58,9 @@ func (h *Handler) loadPromptInputs(ctx context.Context, req GenerateOnceRequest)
 	}
 
 	var template *PromptTemplate
+	if !req.shouldApplyPromptTemplate() {
+		return blockContext, nil, nil
+	}
 	if req.PromptTemplateID != nil {
 		found, err := h.repo.GetPromptTemplate(ctx, req.ProjectID, *req.PromptTemplateID)
 		if err != nil {
@@ -74,6 +77,20 @@ func (h *Handler) loadPromptInputs(ctx context.Context, req GenerateOnceRequest)
 }
 
 func (h *Handler) buildContext(ctx context.Context, req GenerateOnceRequest, blockContext BlockContext, template *PromptTemplate, tokenBudget int) (ContextPreview, error) {
+	if !req.shouldApplyPromptTemplate() {
+		systemPrompt := defaultSystemPrompt()
+		userPrompt := conversationUserContent(req)
+		finalPrompt := "System:\n" + systemPrompt + "\n\nUser:\n" + userPrompt
+		return ContextPreview{
+			SystemPrompt:    systemPrompt,
+			UserPrompt:      userPrompt,
+			FinalPrompt:     finalPrompt,
+			EstimatedTokens: estimateTokens(finalPrompt),
+			TokenBudget:     tokenBudget,
+			Items:           []ContextItem{},
+		}, nil
+	}
+
 	currentBlock := normalizeBlockContent(blockContext.Content, blockContext.ContentFormat)
 	keywords := extractContextKeywords(req, currentBlock, blockContext.CanonFacts)
 

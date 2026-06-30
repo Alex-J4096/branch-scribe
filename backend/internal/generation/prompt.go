@@ -9,6 +9,9 @@ import (
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
 func renderUserPrompt(req GenerateOnceRequest, blockContext BlockContext, contextText map[string]string, template *PromptTemplate) (string, *string) {
+	if !req.shouldApplyPromptTemplate() {
+		return conversationUserContent(req), nil
+	}
 	templateText := defaultPromptTemplate(req.TaskType)
 	var templateID *string
 	if template != nil {

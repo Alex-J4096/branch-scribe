@@ -282,6 +282,7 @@ export type GenerateOnceInput = {
   task_type: string
   model_profile_id: string
   prompt_template_id?: string | null
+  apply_prompt_template?: boolean
   selected_text?: string
   user_instruction?: string
   context_node_count?: number

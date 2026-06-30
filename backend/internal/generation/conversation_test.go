@@ -1,6 +1,7 @@
 package generation
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -76,6 +77,32 @@ func TestConversationHistoryBeforeUserRetryExcludesTargetAndLaterMessages(t *tes
 	}
 	if _, err := conversationHistoryBeforeUserRetry(history, "missing"); !errors.Is(err, ErrGenerationResourceNotFound) {
 		t.Fatalf("missing retry target error = %v", err)
+	}
+}
+
+func TestConversationMessageContentForGenerationUsesActualFirstTurnPrompt(t *testing.T) {
+	snapshot, err := json.Marshal(contextSnapshot{
+		TaskType:        "continue",
+		UserInstruction: "继续写",
+		ContextPreview: ContextPreview{
+			UserPrompt: "完整写作模板\n\n用户指令：\n继续写",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := ConversationMessage{
+		Role:            "user",
+		Content:         "继续写",
+		ContextSnapshot: snapshot,
+	}
+	if got := conversationMessageContentForGeneration(message); got != "完整写作模板\n\n用户指令：\n继续写" {
+		t.Fatalf("generation content = %q", got)
+	}
+
+	message.Content = "编辑后的指令"
+	if got := conversationMessageContentForGeneration(message); got != "编辑后的指令" {
+		t.Fatalf("edited content = %q", got)
 	}
 }
 

@@ -884,6 +884,17 @@
 - 运行 `go test ./...`、`npm run typecheck` 和 `npm run build` 均通过；Vite 仍仅提示既有 bundle 体积警告。
 - 完成后勾选 `ARCHITECTURE.md` 中本轮任务。
 
+### Step 92: 将写作操作改为首轮默认启用的显式开关
+
+- Chatbox 写作操作菜单新增启用/关闭开关；新对话没有历史消息时默认启用，已有多轮历史时默认关闭。
+- 选择或新建写作操作会主动启用本轮模板，用户仍可在发送前手动关闭。
+- 关闭写作操作时以 `free_write` 任务发送，只保留 system 与原始 User 指令，不加载或组装当前正文、Canon、Memory、摘要等上下文项。
+- API 新增向后兼容的 `apply_prompt_template` 字段；旧客户端未传时仍默认启用模板。
+- UI 继续保存简短原始 User 指令，模型历史则从关联 generation run 快照恢复首轮实际发送的完整模板 Prompt，保证模板只组装一次但仍留在多轮上下文中。
+- 若用户编辑历史 User 消息，后续请求优先使用编辑后的内容，不再使用旧快照 Prompt。
+- 增加模板关闭、上下文跳过、默认兼容和历史 Prompt 恢复测试；运行 `go test ./...`、`npm run typecheck` 和 `npm run build` 均通过。
+- 完成后勾选 `ARCHITECTURE.md` 中本轮任务。
+
 ### Step 90: 增加可编排的分支摘要设置
 
 - 将分支面板中单一的摘要输入策略升级为“摘要设置”菜单，集中配置模型、摘要 Prompt 和上下文构成。
@@ -904,3 +915,10 @@
 - 新增手动摘要 API：`POST /api/blocks/:blockId/summaries` 与 `PATCH /api/summaries/:summaryId`，校验项目、目标与非空摘要内容。
 - 新增手动摘要请求参数测试；运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过。
 - 使用真实页面验证摘要设置保存关闭、Block 手动新增/编辑入口及编辑内容回填，页面控制台无错误。
+
+### Step 93: 将 README 扩展为中文项目说明书
+
+- 使用中文重写 README，补充项目定位、主要功能、核心概念和技术栈。
+- 按实际配置与启动入口整理环境变量、数据库、前后端及 LLM Debug 的运行步骤。
+- 补充模型配置、首次创作流程、常用开发命令、项目结构和常见问题。
+- 在 `ARCHITECTURE.md` 的工作清单中登记并完成本轮文档任务。

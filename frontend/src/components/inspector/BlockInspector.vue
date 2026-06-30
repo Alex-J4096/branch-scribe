@@ -67,6 +67,7 @@ const selectedModelProfileId = ref('')
 const selectedSummaryPromptId = ref('')
 const generationTaskType = ref('continue')
 const selectedPromptTemplateId = ref('')
+const isPromptOperationEnabled = ref(true)
 const generationInstruction = ref('')
 const generateTwoVersions = ref(false)
 const contextNodeCount = ref(1)
@@ -243,7 +244,7 @@ const selectedTextForGeneration = computed(() => {
 })
 const canGenerate = computed(() => {
   if (!selectedModelProfileId.value || !blockDetail.value) return false
-  if (generationTaskType.value === 'rewrite_selection') {
+  if (isPromptOperationEnabled.value && generationTaskType.value === 'rewrite_selection') {
     return Boolean(selectedTextForGeneration.value)
   }
   return true
@@ -433,6 +434,20 @@ watch(selectedConversationId, () => {
 })
 
 watch(
+  [selectedConversationId, () => conversationMessagesQuery.data.value],
+  ([conversationId, messages]) => {
+    if (!conversationId) {
+      isPromptOperationEnabled.value = true
+      return
+    }
+    if (messages) {
+      isPromptOperationEnabled.value = messages.length === 0
+    }
+  },
+  { immediate: true },
+)
+
+watch(
   () => props.mode,
   (mode) => {
     if (mode === 'llm') {
@@ -445,6 +460,7 @@ const createConversation = useMutation({
   mutationFn: () => api.createLLMConversation(props.blockId, { project_id: props.projectId }),
   onSuccess: async (conversation) => {
     selectedConversationId.value = conversation.id
+    isPromptOperationEnabled.value = true
     await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
   },
 })
@@ -514,6 +530,7 @@ const savePromptOperation = useMutation({
     operationEditorOpen.value = false
     selectedPromptTemplateId.value = operation.id
     generationTaskType.value = operation.task_type
+    isPromptOperationEnabled.value = true
     await queryClient.invalidateQueries({ queryKey: ['prompt-templates', props.projectId] })
   },
   onError: (error) => {
@@ -602,6 +619,7 @@ const generateCandidates = useMutation({
     if (!selectedConversationId.value) {
       const conversation = await api.createLLMConversation(props.blockId, { project_id: props.projectId })
       selectedConversationId.value = conversation.id
+      isPromptOperationEnabled.value = true
       void queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
     }
     const input = buildGenerateInput()
@@ -1069,6 +1087,7 @@ async function startGenerationStream(regeneration?: {
     if (!selectedConversationId.value) {
       const conversation = await api.createLLMConversation(props.blockId, { project_id: props.projectId })
       selectedConversationId.value = conversation.id
+      isPromptOperationEnabled.value = true
       await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
     } else {
       await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
@@ -1187,9 +1206,10 @@ function buildGenerateInput(
   return {
     project_id: props.projectId,
     block_id: props.blockId,
-    task_type: generationTaskType.value,
+    task_type: isPromptOperationEnabled.value ? generationTaskType.value : 'free_write',
     model_profile_id: modelProfileId,
     prompt_template_id: selectedPromptTemplateId.value || null,
+    apply_prompt_template: isPromptOperationEnabled.value,
     selected_text: selectedTextForGeneration.value,
     user_instruction: instruction,
     context_node_count: contextNodeCount.value,
@@ -1206,6 +1226,7 @@ function buildGenerateInput(
 function selectPromptOperation(operation: PromptTemplate) {
   selectedPromptTemplateId.value = operation.id
   generationTaskType.value = operation.task_type
+  isPromptOperationEnabled.value = true
   operationEditorOpen.value = false
 }
 
@@ -1967,14 +1988,30 @@ function replaceEditorSelectionWithGeneratedContent() {
               </select>
 
               <details class="llm-tool-menu">
-                <summary><Wrench :size="15" aria-hidden="true" />{{ selectedPromptOperation?.name ?? '写作操作' }}</summary>
+                <summary :class="{ 'llm-tool-menu__summary--inactive': !isPromptOperationEnabled }">
+                  <Wrench :size="15" aria-hidden="true" />
+                  {{ isPromptOperationEnabled ? (selectedPromptOperation?.name ?? '写作操作') : '写作操作已关闭' }}
+                </summary>
                 <div class="llm-tool-menu__panel llm-tool-menu__operations">
                   <template v-if="!operationEditorOpen">
                     <header class="llm-menu-header">
-                      <div><strong>写作操作</strong><small>选择操作，或编辑它背后的 Prompt</small></div>
-                      <button class="llm-menu-icon" type="button" title="新建操作" @click="beginCreatePromptOperation">
-                        <Plus :size="16" aria-hidden="true" />
-                      </button>
+                      <div><strong>写作操作</strong><small>关闭时，本轮只发送原始 User 指令</small></div>
+                      <div class="llm-menu-header__actions">
+                        <button
+                          class="llm-prompt-toggle"
+                          :class="{ 'llm-prompt-toggle--active': isPromptOperationEnabled }"
+                          type="button"
+                          role="switch"
+                          :aria-checked="isPromptOperationEnabled"
+                          @click="isPromptOperationEnabled = !isPromptOperationEnabled"
+                        >
+                          <span aria-hidden="true"></span>
+                          {{ isPromptOperationEnabled ? '已启用' : '已关闭' }}
+                        </button>
+                        <button class="llm-menu-icon" type="button" title="新建操作" @click="beginCreatePromptOperation">
+                          <Plus :size="16" aria-hidden="true" />
+                        </button>
+                      </div>
                     </header>
                     <div class="llm-operation-list">
                       <button

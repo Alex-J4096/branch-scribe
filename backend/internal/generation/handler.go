@@ -1086,7 +1086,7 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 			}
 		}
 		for _, message := range historyForRequest {
-			messages = append(messages, ChatMessage{Role: message.Role, Content: message.Content})
+			messages = append(messages, ChatMessage{Role: message.Role, Content: conversationMessageContentForGeneration(message)})
 		}
 		if !req.SkipConversationSave && req.RegenerateMessageID == nil && req.RetryUserMessageID == nil {
 			if _, err := h.repo.AppendConversationMessage(ctx, *req.ConversationID, "user", conversationUserContent(req), &run.ID); err != nil {
@@ -1151,6 +1151,27 @@ func conversationHistoryBeforeUserRetry(history []ConversationMessage, targetUse
 		return history[:index], nil
 	}
 	return nil, ErrGenerationResourceNotFound
+}
+
+func conversationMessageContentForGeneration(message ConversationMessage) string {
+	if message.Role != "user" || len(message.ContextSnapshot) == 0 {
+		return message.Content
+	}
+	var snapshot contextSnapshot
+	if err := json.Unmarshal(message.ContextSnapshot, &snapshot); err != nil {
+		return message.Content
+	}
+	originalContent := strings.TrimSpace(snapshot.UserInstruction)
+	if originalContent == "" {
+		originalContent = "执行 " + snapshot.TaskType
+	}
+	if strings.TrimSpace(message.Content) != originalContent {
+		return message.Content
+	}
+	if userPrompt := strings.TrimSpace(snapshot.ContextPreview.UserPrompt); userPrompt != "" {
+		return userPrompt
+	}
+	return message.Content
 }
 
 func normalizeMessageIDs(messageIDs []string) ([]string, error) {

@@ -39,6 +39,7 @@ type GenerateOnceRequest struct {
 	TaskType               string   `json:"task_type"`
 	ModelProfileID         string   `json:"model_profile_id"`
 	PromptTemplateID       *string  `json:"prompt_template_id"`
+	ApplyPromptTemplate    *bool    `json:"apply_prompt_template"`
 	SelectedText           string   `json:"selected_text"`
 	UserInstruction        string   `json:"user_instruction"`
 	ContextNodeCount       *int     `json:"context_node_count"`
@@ -154,14 +155,15 @@ type Conversation struct {
 }
 
 type ConversationMessage struct {
-	ID              string    `json:"id"`
-	ConversationID  string    `json:"conversation_id"`
-	Role            string    `json:"role"`
-	Content         string    `json:"content"`
-	GenerationRunID *string   `json:"generation_run_id"`
-	Model           *string   `json:"model"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              string          `json:"id"`
+	ConversationID  string          `json:"conversation_id"`
+	Role            string          `json:"role"`
+	Content         string          `json:"content"`
+	GenerationRunID *string         `json:"generation_run_id"`
+	Model           *string         `json:"model"`
+	ContextSnapshot json.RawMessage `json:"-"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 type CreateConversationRequest struct {
@@ -451,6 +453,10 @@ func (req GenerateOnceRequest) normalized() (GenerateOnceRequest, error) {
 	if req.ProjectID == "" || req.BlockID == "" || req.TaskType == "" || req.ModelProfileID == "" {
 		return req, ErrInvalidGenerationRequest
 	}
+	if req.ApplyPromptTemplate == nil {
+		enabled := true
+		req.ApplyPromptTemplate = &enabled
+	}
 	if req.RegenerateMessageID != nil && req.RetryUserMessageID != nil {
 		return req, ErrInvalidGenerationRequest
 	}
@@ -474,6 +480,10 @@ func (req GenerateOnceRequest) normalized() (GenerateOnceRequest, error) {
 	}
 	req.ExcludedContextItemIDs = normalizeStringSet(req.ExcludedContextItemIDs)
 	return req, nil
+}
+
+func (req GenerateOnceRequest) shouldApplyPromptTemplate() bool {
+	return req.ApplyPromptTemplate == nil || *req.ApplyPromptTemplate
 }
 
 func normalizeStringSet(values []string) []string {

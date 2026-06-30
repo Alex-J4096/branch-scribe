@@ -52,3 +52,19 @@ func TestGenerateOnceRequestRejectsConflictingConversationRetryTargets(t *testin
 		t.Fatal("expected conflicting retry targets to be rejected")
 	}
 }
+
+func TestGenerateOnceRequestDefaultsPromptTemplateToEnabled(t *testing.T) {
+	request := GenerateOnceRequest{
+		ProjectID:      "project",
+		BlockID:        "block",
+		TaskType:       "continue",
+		ModelProfileID: "profile",
+	}
+	normalized, err := request.normalized()
+	if err != nil {
+		t.Fatalf("normalize request: %v", err)
+	}
+	if normalized.ApplyPromptTemplate == nil || !*normalized.ApplyPromptTemplate {
+		t.Fatal("expected prompt template to default to enabled")
+	}
+}

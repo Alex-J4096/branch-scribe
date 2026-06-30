@@ -499,7 +499,7 @@ CREATE TABLE generation_runs (
 
 ### 6.12 llm_conversations / llm_messages
 
-LLM 辅助写作对话独立于正文 revision 和 generation run 保存。conversation 归属于 block；message 保存线性的 `user` / `assistant` 对话流，并可通过 `generation_run_id` 追溯实际模型调用。编辑历史消息时仅更新该消息内容，后续消息保持不变；重新生成会直接替换对应的 assistant 回复及其 generation run 关联，不新增一轮消息。
+LLM 辅助写作对话独立于正文 revision 和 generation run 保存。conversation 归属于 block；message 保存线性的 `user` / `assistant` 对话流，并可通过 `generation_run_id` 追溯实际模型调用。界面中的 User 消息保存原始指令；后续模型调用可从关联 generation run 的 context snapshot 恢复首轮实际发送的完整模板 Prompt。编辑历史消息时仅更新该消息内容，后续调用优先使用编辑后的内容；重新生成会直接替换对应的 assistant 回复及其 generation run 关联，不新增一轮消息。
 
 ```sql
 CREATE TABLE llm_conversations (
@@ -1353,6 +1353,7 @@ branchscribe/
 * [x] 添加 pgvector 扩展初始化。
 * [x] 添加 `.env.example`。
 * [x] 添加 README 基础说明。
+* [x] 将 README 扩展为中文项目说明书。
 * [ ] 添加前后端启动脚本。
 
 ### 验收标准
@@ -1630,6 +1631,7 @@ branchscribe/
 * [x] 将写作操作与上下文二级菜单改为适配 Chatbox 的浮层样式。
 * [x] 支持在 Chatbox 中新增、编辑和删除写作操作及其 Prompt。
 * [x] 为每个项目初始化可编辑的默认写作操作，并在生成时使用选中的 Prompt Template。
+* [x] 写作操作支持显式开关：新对话首轮默认启用，后续轮次默认只发送原始 User 指令。
 * [x] 支持快捷切换模型、创建/切换/删除对话。
 * [x] 支持复制、编辑 user/assistant 消息，编辑仅保存当前消息且不截断后续对话。
 * [x] 支持从任意 assistant 回复直接保存 Revision。

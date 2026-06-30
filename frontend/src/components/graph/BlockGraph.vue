@@ -248,7 +248,7 @@ async function updatePosition(event: { node: Node }) {
     :connection-line-type="ConnectionLineType.SmoothStep"
     @node-click="({ node }) => emit('selectBlock', String(node.id))"
     @edge-click="({ edge }) => emit('selectEdge', String(edge.id))"
-    @pane-click="emit('selectEdge', null)"
+    @pane-click="emit('selectBlock', null); emit('selectEdge', null)"
     @node-drag-stop="updatePosition"
     @connect="createDraggedEdge"
   >

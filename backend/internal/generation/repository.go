@@ -99,7 +99,8 @@ func (r *Repository) DeleteConversation(ctx context.Context, conversationID stri
 func (r *Repository) ListConversationMessages(ctx context.Context, conversationID string) ([]ConversationMessage, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT message.id::text, message.conversation_id::text, message.role, message.content,
-			message.generation_run_id::text, run.model, message.created_at, message.updated_at
+			message.generation_run_id::text, run.model, run.input_context_snapshot,
+			message.created_at, message.updated_at
 		FROM llm_messages AS message
 		LEFT JOIN generation_runs AS run ON run.id = message.generation_run_id
 		WHERE message.conversation_id = $1
@@ -134,7 +135,7 @@ func (r *Repository) AppendConversationMessage(ctx context.Context, conversation
 		INSERT INTO llm_messages (conversation_id, role, content, generation_run_id)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text,
-			NULL::text, created_at, updated_at
+			NULL::text, NULL::jsonb, created_at, updated_at
 	`, conversationID, role, content, nullableString(runID)))
 	if err != nil {
 		return ConversationMessage{}, normalizeNotFound(err)
@@ -176,7 +177,7 @@ func (r *Repository) UpdateConversationMessage(ctx context.Context, messageID st
 	message, err := scanConversationMessage(tx.QueryRow(ctx, `
 		UPDATE llm_messages SET content = $2, updated_at = now() WHERE id = $1
 		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text,
-			NULL::text, created_at, updated_at
+			NULL::text, NULL::jsonb, created_at, updated_at
 	`, messageID, content))
 	if err != nil {
 		return ConversationMessage{}, err
@@ -243,15 +244,19 @@ func scanConversationMessage(scanner conversationMessageScanner) (ConversationMe
 	var message ConversationMessage
 	var runID sql.NullString
 	var model sql.NullString
+	var contextSnapshot []byte
 	err := scanner.Scan(
 		&message.ID, &message.ConversationID, &message.Role, &message.Content,
-		&runID, &model, &message.CreatedAt, &message.UpdatedAt,
+		&runID, &model, &contextSnapshot, &message.CreatedAt, &message.UpdatedAt,
 	)
 	if runID.Valid {
 		message.GenerationRunID = &runID.String
 	}
 	if model.Valid {
 		message.Model = &model.String
+	}
+	if len(contextSnapshot) > 0 {
+		message.ContextSnapshot = contextSnapshot
 	}
 	return message, err
 }
