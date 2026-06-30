@@ -34,3 +34,21 @@ func TestGenerateOnceRequestContextNodeCount(t *testing.T) {
 		t.Fatal("expected context node count below -1 to be rejected")
 	}
 }
+
+func TestGenerateOnceRequestRejectsConflictingConversationRetryTargets(t *testing.T) {
+	conversationID := "conversation"
+	assistantID := "assistant"
+	userID := "user"
+	request := GenerateOnceRequest{
+		ProjectID:           "project",
+		BlockID:             "block",
+		TaskType:            "continue",
+		ModelProfileID:      "profile",
+		ConversationID:      &conversationID,
+		RegenerateMessageID: &assistantID,
+		RetryUserMessageID:  &userID,
+	}
+	if _, err := request.normalized(); err == nil {
+		t.Fatal("expected conflicting retry targets to be rejected")
+	}
+}

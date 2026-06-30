@@ -13,12 +13,14 @@ import {
   MapPin,
   Move,
   Pencil,
+  MessageSquareText,
   ExternalLink,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightOpen,
   Plus,
   RefreshCw,
+  Save,
   Settings,
   Telescope,
   Clock3,
@@ -50,6 +52,11 @@ const selectedEdgeId = ref<string | null>(null)
 const selectedEdgeType = ref<GraphEdge['edge_type']>('next')
 const selectedEdgeLabel = ref('')
 const selectedSummaryModelProfileId = ref('')
+const branchSummarySourceMode = ref<'full_text' | 'prefer_block_summaries' | 'block_summaries_only'>('full_text')
+const selectedBranchSummaryPromptId = ref('')
+const branchSummarySourceSelections = ref<Record<string, 'full_text' | 'summary' | 'exclude'>>({})
+const isSummarySettingsOpen = ref(false)
+const summarySettingsMessage = ref('')
 const branchSummaryError = ref('')
 const isEditingBranch = ref(false)
 const branchEditName = ref('')
@@ -62,6 +69,7 @@ const canvasRef = ref<HTMLElement | null>(null)
 const toolWindowRef = ref<HTMLElement | null>(null)
 const toolWindowPosition = ref<{ x: number; y: number } | null>(null)
 let toolDrag: { pointerId: number; offsetX: number; offsetY: number } | null = null
+let branchSummaryAbortController: AbortController | null = null
 const openLeftSections = ref({
   branches: true,
   createBlock: true,
@@ -102,6 +110,13 @@ const modelProfilesQuery = useQuery({
   queryKey: ['model-profiles'],
   queryFn: api.listModelProfiles,
 })
+const promptTemplatesQuery = useQuery({
+  queryKey: computed(() => ['prompt-templates', projectId.value]),
+  queryFn: () => api.listPromptTemplates(projectId.value),
+})
+const branchSummaryPrompts = computed(() =>
+  (promptTemplatesQuery.data.value ?? []).filter((template) => template.task_type === 'branch_summary'),
+)
 
 const branches = computed(() => branchesQuery.data.value ?? [])
 const branchPalette = ['#2f7d76', '#9b6b28', '#7a4fa3', '#466987', '#b64f6b', '#607449']
@@ -121,6 +136,22 @@ const selectedBranch = computed(() =>
 const selectedBranchBlockCount = computed(() =>
   blocks.value.filter((block) => block.branch_id === selectedBranchId.value).length,
 )
+const selectedBranchBlocks = computed(() =>
+  blocks.value
+    .filter((block) => block.branch_id === selectedBranchId.value)
+    .sort((left, right) => left.order_index - right.order_index || left.created_at.localeCompare(right.created_at)),
+)
+const validBlockSummaryIds = computed(() => new Set(
+  (summariesQuery.data.value ?? [])
+    .filter((summary) => summary.status === 'valid' && (summary.target_type === 'block' || summary.target_type === 'chapter'))
+    .map((summary) => summary.target_id),
+))
+const includedSummarySourceCount = computed(() =>
+  selectedBranchBlocks.value.filter((block) => branchSummarySourceSelections.value[block.id] !== 'exclude').length,
+)
+const compressedSummarySourceCount = computed(() =>
+  selectedBranchBlocks.value.filter((block) => branchSummarySourceSelections.value[block.id] === 'summary').length,
+)
 
 function branchSummaryStatus(branchId: string) {
   const summary = (summariesQuery.data.value ?? []).find(
@@ -139,6 +170,86 @@ watch(
   },
   { immediate: true },
 )
+
+function hydrateBranchSummarySettings() {
+    const branchSettings = selectedBranch.value?.metadata?.summary_settings
+    const settings = branchSettings && typeof branchSettings === 'object'
+      ? branchSettings as Record<string, unknown>
+      : null
+    const savedSelections = settings?.source_selections
+      ?? selectedBranchSummary.value?.metadata?.source_selections
+    const next: Record<string, 'full_text' | 'summary' | 'exclude'> = {}
+    if (Array.isArray(savedSelections)) {
+      for (const item of savedSelections) {
+        if (
+          item && typeof item === 'object'
+          && typeof item.block_id === 'string'
+          && (item.mode === 'full_text' || item.mode === 'summary' || item.mode === 'exclude')
+        ) {
+          next[item.block_id] = item.mode
+        }
+      }
+    }
+    for (const block of selectedBranchBlocks.value) {
+      if (!next[block.id]) next[block.id] = 'full_text'
+      if (next[block.id] === 'summary' && !validBlockSummaryIds.value.has(block.id)) {
+        next[block.id] = 'full_text'
+      }
+    }
+    branchSummarySourceSelections.value = next
+    const savedPromptID = settings?.prompt_template_id
+      ?? selectedBranchSummary.value?.metadata?.prompt_template_id
+    selectedBranchSummaryPromptId.value = typeof savedPromptID === 'string' ? savedPromptID : ''
+    const savedModelID = settings?.model_profile_id
+    if (typeof savedModelID === 'string') selectedSummaryModelProfileId.value = savedModelID
+    const savedSourceMode = settings?.source_mode
+    if (
+      savedSourceMode === 'full_text'
+      || savedSourceMode === 'prefer_block_summaries'
+      || savedSourceMode === 'block_summaries_only'
+    ) {
+      branchSummarySourceMode.value = savedSourceMode
+    }
+}
+
+watch(
+  [selectedBranchId, selectedBranchBlocks, selectedBranchSummary, selectedBranch],
+  () => {
+    if (!isSummarySettingsOpen.value) hydrateBranchSummarySettings()
+  },
+  { immediate: true },
+)
+
+function openSummarySettings() {
+  hydrateBranchSummarySettings()
+  summarySettingsMessage.value = ''
+  isSummarySettingsOpen.value = true
+}
+
+function closeSummarySettings() {
+  hydrateBranchSummarySettings()
+  summarySettingsMessage.value = ''
+  isSummarySettingsOpen.value = false
+}
+
+function applySummarySourcePreset(mode: 'full_text' | 'prefer_block_summaries' | 'block_summaries_only') {
+  branchSummarySourceMode.value = mode
+  branchSummarySourceSelections.value = Object.fromEntries(
+    selectedBranchBlocks.value.map((block) => {
+      if (mode === 'full_text') return [block.id, 'full_text']
+      if (validBlockSummaryIds.value.has(block.id)) return [block.id, 'summary']
+      return [block.id, mode === 'block_summaries_only' ? 'exclude' : 'full_text']
+    }),
+  )
+}
+
+function openSummaryPromptManager() {
+  void router.push({
+    name: 'prompt-settings',
+    params: { projectId: projectId.value },
+    query: { task: 'branch_summary', from: route.fullPath },
+  })
+}
 
 watch(
   () => (modelProfilesQuery.data.value ?? []).filter((profile) => profile.profile_type === 'llm'),
@@ -303,20 +414,73 @@ const generateBranchSummary = useMutation({
     const input = {
       project_id: projectId.value,
       model_profile_id: selectedSummaryModelProfileId.value,
+      source_mode: branchSummarySourceMode.value,
+      prompt_template_id: selectedBranchSummaryPromptId.value || null,
+      source_selections: selectedBranchBlocks.value.map((block) => ({
+        block_id: block.id,
+        mode: branchSummarySourceSelections.value[block.id] ?? 'full_text',
+      })),
     }
+    branchSummaryAbortController = new AbortController()
     return selectedBranchSummary.value
-      ? api.refreshSummary(selectedBranchSummary.value.id, input)
-      : api.generateBranchSummary(selectedBranchId.value, input)
+      ? api.refreshSummary(selectedBranchSummary.value.id, input, branchSummaryAbortController.signal)
+      : api.generateBranchSummary(selectedBranchId.value, input, branchSummaryAbortController.signal)
   },
   onSuccess: async () => {
     branchSummaryError.value = ''
     await queryClient.invalidateQueries({ queryKey: ['summaries', projectId.value] })
   },
   onError: (error) => {
-    branchSummaryError.value = error instanceof Error ? error.message : '分支摘要生成失败'
+    branchSummaryError.value = error instanceof DOMException && error.name === 'AbortError'
+      ? '摘要生成已取消'
+      : error instanceof Error ? error.message : '分支摘要生成失败'
     void queryClient.invalidateQueries({ queryKey: ['summaries', projectId.value] })
   },
+  onSettled: () => {
+    branchSummaryAbortController = null
+  },
 })
+
+const saveBranchSummarySettings = useMutation({
+  mutationFn: () => {
+    if (!selectedBranch.value) throw new Error('请先选择分支')
+    return api.updateBranch(selectedBranch.value.id, {
+      metadata: {
+        ...selectedBranch.value.metadata,
+        summary_settings: {
+          model_profile_id: selectedSummaryModelProfileId.value,
+          prompt_template_id: selectedBranchSummaryPromptId.value || null,
+          source_mode: branchSummarySourceMode.value,
+          source_selections: selectedBranchBlocks.value.map((block) => ({
+            block_id: block.id,
+            mode: branchSummarySourceSelections.value[block.id] ?? 'full_text',
+          })),
+        },
+      },
+    })
+  },
+  onSuccess: async () => {
+    summarySettingsMessage.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['branches', projectId.value] })
+    isSummarySettingsOpen.value = false
+  },
+  onError: (error) => {
+    summarySettingsMessage.value = error instanceof Error ? error.message : '摘要设置保存失败'
+  },
+})
+
+async function saveAndGenerateBranchSummary() {
+  try {
+    await saveBranchSummarySettings.mutateAsync()
+    generateBranchSummary.mutate()
+  } catch {
+    // 保存错误由 mutation 展示，配置未保存时不发起生成。
+  }
+}
+
+function cancelBranchSummaryGeneration() {
+  branchSummaryAbortController?.abort()
+}
 
 watch(
   () => graph.value.nodes,
@@ -416,6 +580,7 @@ function openBlockToolInNewTab() {
 }
 
 onBeforeUnmount(() => {
+  branchSummaryAbortController?.abort()
   window.removeEventListener('pointermove', moveToolWindow)
   window.removeEventListener('pointerup', stopToolDrag)
 })
@@ -463,6 +628,10 @@ async function refreshWorkspace() {
       <button class="button" type="button" @click="router.push({ name: 'model-profiles', query: { from: route.fullPath } })">
         <Settings :size="16" aria-hidden="true" />
         模型
+      </button>
+      <button class="button" type="button" @click="router.push({ name: 'prompt-settings', params: { projectId } })">
+        <MessageSquareText :size="16" aria-hidden="true" />
+        Prompt
       </button>
       <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'character' } })">
         <BookOpen :size="16" aria-hidden="true" />
@@ -580,21 +749,33 @@ async function refreshWorkspace() {
                 分支正文已变化，摘要需要刷新。
               </div>
               <div v-if="branchSummaryError" class="llm-message llm-message--error">{{ branchSummaryError }}</div>
-              <select v-model="selectedSummaryModelProfileId">
-                <option value="" disabled>选择摘要模型</option>
-                <option v-for="profile in (modelProfilesQuery.data.value ?? []).filter((item) => item.profile_type === 'llm')" :key="profile.id" :value="profile.id">
-                  {{ profile.name }} · {{ profile.model }}
-                </option>
-              </select>
-              <button
-                class="button button--primary"
-                type="button"
-                :disabled="!selectedSummaryModelProfileId || generateBranchSummary.isPending.value"
-                @click="generateBranchSummary.mutate()"
-              >
-                <RefreshCw :size="15" aria-hidden="true" />
-                {{ generateBranchSummary.isPending.value ? '生成中' : selectedBranchSummary ? '刷新分支摘要' : '生成分支摘要' }}
-              </button>
+              <div class="branch-summary-actions__composition">
+                <span>{{ includedSummarySourceCount }}/{{ selectedBranchBlocks.length }} 个 Block</span>
+                <span>{{ compressedSummarySourceCount }} 个使用已有摘要</span>
+              </div>
+              <div class="branch-management__actions">
+                <button class="button" type="button" @click="openSummarySettings">
+                  <Settings :size="15" aria-hidden="true" />摘要设置
+                </button>
+                <button
+                  v-if="generateBranchSummary.isPending.value"
+                  class="button button--danger"
+                  type="button"
+                  @click="cancelBranchSummaryGeneration"
+                >
+                  <X :size="15" aria-hidden="true" />取消生成
+                </button>
+                <button
+                  v-else
+                  class="button button--primary"
+                  type="button"
+                  :disabled="!selectedSummaryModelProfileId || includedSummarySourceCount === 0"
+                  @click="generateBranchSummary.mutate()"
+                >
+                  <RefreshCw :size="15" aria-hidden="true" />
+                  {{ generateBranchSummary.isPending.value ? '生成中' : selectedBranchSummary ? '刷新摘要' : '生成摘要' }}
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -817,5 +998,107 @@ async function refreshWorkspace() {
         Block 工具
       </button>
     </section>
+
+    <div v-if="isSummarySettingsOpen" class="dialog-backdrop" @click.self="closeSummarySettings">
+      <section class="dialog summary-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="summary-settings-title">
+        <header class="dialog__header">
+          <div>
+            <p class="eyebrow">Branch summary</p>
+            <h2 id="summary-settings-title">摘要设置 · {{ selectedBranch?.name }}</h2>
+          </div>
+          <button class="icon-button" type="button" title="关闭" @click="closeSummarySettings">
+            <X :size="18" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div class="summary-settings-dialog__body">
+          <section class="summary-settings-group">
+            <div class="summary-settings-group__heading">
+              <div>
+                <strong>生成配置</strong>
+                <p>选择生成摘要使用的模型和 Prompt。</p>
+              </div>
+              <button class="button" type="button" @click="openSummaryPromptManager">
+                <MessageSquareText :size="15" aria-hidden="true" />管理 Prompt
+              </button>
+            </div>
+            <div class="summary-settings-fields">
+              <label class="field-label">
+                <span>模型</span>
+                <select v-model="selectedSummaryModelProfileId">
+                  <option value="" disabled>选择摘要模型</option>
+                  <option v-for="profile in (modelProfilesQuery.data.value ?? []).filter((item) => item.profile_type === 'llm')" :key="profile.id" :value="profile.id">
+                    {{ profile.name }} · {{ profile.model }}
+                  </option>
+                </select>
+              </label>
+              <label class="field-label">
+                <span>Prompt</span>
+                <select v-model="selectedBranchSummaryPromptId">
+                  <option value="">默认分支摘要 Prompt</option>
+                  <option v-for="template in branchSummaryPrompts" :key="template.id" :value="template.id">
+                    {{ template.name }}
+                  </option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="summary-settings-group">
+            <div class="summary-settings-group__heading">
+              <div>
+                <strong>上下文构成</strong>
+                <p>较新的关键片段可保留正文，较远内容可改用摘要；不需要的内容可以排除。</p>
+              </div>
+              <span>{{ includedSummarySourceCount }} 个已选</span>
+            </div>
+            <div class="summary-source-presets">
+              <button class="button" type="button" @click="applySummarySourcePreset('full_text')">全部正文</button>
+              <button class="button" type="button" @click="applySummarySourcePreset('prefer_block_summaries')">有摘要则压缩</button>
+              <button class="button" type="button" @click="applySummarySourcePreset('block_summaries_only')">仅已有摘要</button>
+            </div>
+            <div v-if="selectedBranchBlocks.length === 0" class="empty-state empty-state--compact">当前分支还没有 Block。</div>
+            <ol v-else class="summary-source-list">
+              <li v-for="(block, index) in selectedBranchBlocks" :key="block.id" class="summary-source-list__item">
+                <span class="summary-source-list__index">{{ index + 1 }}</span>
+                <div>
+                  <strong>{{ block.title || `无标题片段 #${index + 1}` }}</strong>
+                  <small>{{ block.type }} · {{ validBlockSummaryIds.has(block.id) ? '有有效摘要' : '暂无有效摘要' }}</small>
+                </div>
+                <select v-model="branchSummarySourceSelections[block.id]" :aria-label="`${block.title || '无标题片段'}的摘要输入方式`">
+                  <option value="full_text">使用正文</option>
+                  <option value="summary" :disabled="!validBlockSummaryIds.has(block.id)">使用摘要</option>
+                  <option value="exclude">不包含</option>
+                </select>
+              </li>
+            </ol>
+          </section>
+        </div>
+
+        <footer class="dialog__footer">
+          <span v-if="includedSummarySourceCount === 0" class="summary-settings-dialog__warning">至少保留一个 Block。</span>
+          <span v-if="summarySettingsMessage" class="summary-settings-dialog__warning">{{ summarySettingsMessage }}</span>
+          <button class="button" type="button" @click="closeSummarySettings">取消</button>
+          <button
+            class="button"
+            type="button"
+            :disabled="saveBranchSummarySettings.isPending.value"
+            @click="saveBranchSummarySettings.mutate()"
+          >
+            <Save :size="15" aria-hidden="true" />
+            {{ saveBranchSummarySettings.isPending.value ? '保存中' : '完成' }}
+          </button>
+          <button
+            class="button button--primary"
+            type="button"
+            :disabled="!selectedSummaryModelProfileId || includedSummarySourceCount === 0 || saveBranchSummarySettings.isPending.value"
+            @click="saveAndGenerateBranchSummary"
+          >
+            <RefreshCw :size="15" aria-hidden="true" />
+            {{ selectedBranchSummary ? '按此设置刷新' : '按此设置生成' }}
+          </button>
+        </footer>
+      </section>
+    </div>
   </main>
 </template>

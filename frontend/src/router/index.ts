@@ -9,6 +9,7 @@ import BlockTool from '@/views/BlockTool.vue'
 import ForeshadowingManager from '@/views/ForeshadowingManager.vue'
 import TimelineManager from '@/views/TimelineManager.vue'
 import TransferManager from '@/views/TransferManager.vue'
+import PromptSettings from '@/views/PromptSettings.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -57,6 +58,11 @@ export const router = createRouter({
       path: '/projects/:projectId/transfer',
       name: 'transfer-manager',
       component: TransferManager,
+    },
+    {
+      path: '/projects/:projectId/prompts',
+      name: 'prompt-settings',
+      component: PromptSettings,
     },
   ],
 })

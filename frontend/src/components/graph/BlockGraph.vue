@@ -262,7 +262,13 @@ async function updatePosition(event: { node: Node }) {
     </svg>
 
     <template #node-default="{ id, data, selected }">
-      <div class="story-node__body" :class="{ 'is-selected': selected }" :data-block-id="id" @contextmenu.prevent="emit('forkBlock', String(id))">
+      <div
+        class="story-node__body"
+        :class="{ 'is-selected': selected || String(id) === selectedBlockId }"
+        :data-block-id="id"
+        :aria-current="String(id) === selectedBlockId ? 'true' : undefined"
+        @contextmenu.prevent="emit('forkBlock', String(id))"
+      >
         <Handle
           id="target"
           class="story-node__handle story-node__handle--target"

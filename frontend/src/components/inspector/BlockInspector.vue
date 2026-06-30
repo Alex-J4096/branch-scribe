@@ -20,6 +20,7 @@ import {
   Save,
   Send,
   Settings2,
+  Square,
   SquarePen,
   Tags,
   Trash2,
@@ -63,6 +64,7 @@ const forkTitle = ref('')
 const diffBaseRevisionId = ref('')
 const diffTargetRevisionId = ref('')
 const selectedModelProfileId = ref('')
+const selectedSummaryPromptId = ref('')
 const generationTaskType = ref('continue')
 const selectedPromptTemplateId = ref('')
 const generationInstruction = ref('')
@@ -73,6 +75,13 @@ const pendingUserMessage = ref('')
 const pendingUserMessageBaselineIds = ref<string[]>([])
 const editingMessageId = ref('')
 const editingMessageContent = ref('')
+const regenerationRequest = ref<{
+  instruction: string
+  messageId?: string
+  retryUserMessageId?: string
+  anchorMessageId: string
+} | null>(null)
+const regenerationModelProfileId = ref('')
 const isSelectingMessages = ref(false)
 const selectedMessageIds = ref<string[]>([])
 const savingMessageRevisionId = ref('')
@@ -103,6 +112,8 @@ const streamingOutput = ref('')
 const reasoningOutput = ref('')
 const generationError = ref('')
 const summaryError = ref('')
+const manualSummaryText = ref('')
+const manualSummaryMode = ref<'create' | 'edit' | null>(null)
 const consistencyResult = ref<ConsistencyCheckResult | null>(null)
 const consistencyError = ref('')
 const isGenerationStreaming = ref(false)
@@ -121,6 +132,7 @@ const openSections = ref({
 })
 let autosaveTimer: ReturnType<typeof window.setTimeout> | null = null
 let generationAbortController: AbortController | null = null
+let summaryAbortController: AbortController | null = null
 const richTextEditorRef = ref<InstanceType<typeof RichTextEditor> | null>(null)
 
 const blockQuery = useQuery({
@@ -174,7 +186,9 @@ const conversationMessagesQuery = useQuery({
 const blockDetail = computed(() => blockQuery.data.value)
 const revisions = computed(() => revisionsQuery.data.value ?? [])
 const modelProfiles = computed(() => (modelProfilesQuery.data.value ?? []).filter((profile) => profile.profile_type === 'llm'))
-const promptOperations = computed(() => [...(promptTemplatesQuery.data.value ?? [])].sort((left, right) => {
+const promptOperations = computed(() => [...(promptTemplatesQuery.data.value ?? [])]
+  .filter((template) => defaultOperationOrder.includes(template.task_type))
+  .sort((left, right) => {
   const leftIndex = defaultOperationOrder.indexOf(left.task_type)
   const rightIndex = defaultOperationOrder.indexOf(right.task_type)
   if (leftIndex < 0 && rightIndex < 0) return left.created_at.localeCompare(right.created_at)
@@ -182,6 +196,10 @@ const promptOperations = computed(() => [...(promptTemplatesQuery.data.value ?? 
   if (rightIndex < 0) return -1
   return leftIndex - rightIndex
 }))
+const summaryPrompts = computed(() => {
+  const taskType = blockDetail.value?.block.type === 'chapter' ? 'chapter_summary' : 'block_summary'
+  return (promptTemplatesQuery.data.value ?? []).filter((template) => template.task_type === taskType)
+})
 const selectedPromptOperation = computed(
   () => promptOperations.value.find((operation) => operation.id === selectedPromptTemplateId.value) ?? null,
 )
@@ -402,6 +420,7 @@ watch(
     pendingUserMessage.value = ''
     pendingUserMessageBaselineIds.value = []
     editingMessageId.value = ''
+    regenerationRequest.value = null
     isSelectingMessages.value = false
     selectedMessageIds.value = []
   },
@@ -410,6 +429,7 @@ watch(
 watch(selectedConversationId, () => {
   isSelectingMessages.value = false
   selectedMessageIds.value = []
+  regenerationRequest.value = null
 })
 
 watch(
@@ -582,9 +602,7 @@ const generateCandidates = useMutation({
     if (!selectedConversationId.value) {
       const conversation = await api.createLLMConversation(props.blockId, { project_id: props.projectId })
       selectedConversationId.value = conversation.id
-      await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
-    } else {
-      await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
+      void queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
     }
     const input = buildGenerateInput()
     generationInstruction.value = ''
@@ -710,20 +728,58 @@ const generateSummary = useMutation({
     const input = {
       project_id: props.projectId,
       model_profile_id: selectedModelProfileId.value,
+      prompt_template_id: selectedSummaryPromptId.value || null,
     }
+    summaryAbortController = new AbortController()
     return currentSummary.value
-      ? api.refreshSummary(currentSummary.value.id, input)
-      : api.generateBlockSummary(props.blockId, input)
+      ? api.refreshSummary(currentSummary.value.id, input, summaryAbortController.signal)
+      : api.generateBlockSummary(props.blockId, input, summaryAbortController.signal)
   },
   onSuccess: async () => {
     summaryError.value = ''
     await queryClient.invalidateQueries({ queryKey: ['summaries', props.projectId] })
   },
   onError: (error) => {
-    summaryError.value = error instanceof Error ? error.message : '摘要生成失败'
+    summaryError.value = error instanceof DOMException && error.name === 'AbortError'
+      ? '摘要生成已取消'
+      : error instanceof Error ? error.message : '摘要生成失败'
     void queryClient.invalidateQueries({ queryKey: ['summaries', props.projectId] })
   },
+  onSettled: () => {
+    summaryAbortController = null
+  },
 })
+
+const saveManualSummary = useMutation({
+  mutationFn: () => {
+    const summaryText = manualSummaryText.value.trim()
+    if (!summaryText) throw new Error('摘要内容不能为空')
+    const input = { project_id: props.projectId, summary_text: summaryText }
+    if (manualSummaryMode.value === 'edit' && currentSummary.value) {
+      return api.updateManualSummary(currentSummary.value.id, input)
+    }
+    return api.createManualBlockSummary(props.blockId, input)
+  },
+  onSuccess: async () => {
+    manualSummaryMode.value = null
+    manualSummaryText.value = ''
+    summaryError.value = ''
+    await queryClient.invalidateQueries({ queryKey: ['summaries', props.projectId] })
+  },
+  onError: (error) => {
+    summaryError.value = error instanceof Error ? error.message : '手动摘要保存失败'
+  },
+})
+
+function openManualSummary(mode: 'create' | 'edit') {
+  manualSummaryMode.value = mode
+  manualSummaryText.value = mode === 'edit' ? currentSummary.value?.summary_text ?? '' : ''
+  summaryError.value = ''
+}
+
+function cancelSummaryGeneration() {
+  summaryAbortController?.abort()
+}
 
 const checkConsistency = useMutation({
   mutationFn: () => {
@@ -788,6 +844,7 @@ onBeforeUnmount(() => {
   if (copiedMessageTimer) {
     window.clearTimeout(copiedMessageTimer)
   }
+  summaryAbortController?.abort()
   cancelGeneration()
 })
 
@@ -979,8 +1036,19 @@ function toggleSection(section: keyof typeof openSections.value) {
   openSections.value[section] = !openSections.value[section]
 }
 
-async function startGenerationStream(regeneration?: { instruction: string; messageId: string }) {
-  if (!canGenerate.value || isGenerationStreaming.value || isGenerationStarting.value) return
+async function startGenerationStream(regeneration?: {
+  instruction: string
+  messageId?: string
+  retryUserMessageId?: string
+  modelProfileId: string
+}) {
+  if (isGenerationStreaming.value || isGenerationStarting.value) return
+  const modelProfileId = regeneration?.modelProfileId ?? selectedModelProfileId.value
+  const modelProfile = modelProfiles.value.find((profile) => profile.id === modelProfileId)
+  if (!blockDetail.value || !modelProfile?.has_api_key) {
+    generationError.value = '请选择已配置 API Key 的可用模型'
+    return
+  }
   const instruction = regeneration?.instruction.trim() ?? generationInstruction.value.trim()
   if (!instruction) {
     generationError.value = '请输入想和 Agent 讨论或执行的内容'
@@ -994,7 +1062,9 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
   }
 
   isGenerationStarting.value = true
-  pendingUserMessageBaselineIds.value = conversationMessages.value.map((message) => message.id)
+  regenerationRequest.value = null
+  const submittedMessageBaselineIds = conversationMessages.value.map((message) => message.id)
+  pendingUserMessageBaselineIds.value = submittedMessageBaselineIds
   try {
     if (!selectedConversationId.value) {
       const conversation = await api.createLLMConversation(props.blockId, { project_id: props.projectId })
@@ -1015,7 +1085,7 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
     if (!regeneration) generationInstruction.value = ''
 
     await api.generateStream(
-      buildGenerateInput(instruction, regeneration?.messageId),
+      buildGenerateInput(instruction, regeneration?.messageId, modelProfileId, regeneration?.retryUserMessageId),
       (event) => {
         if (event.type === 'delta') {
           streamingOutput.value += event.content ?? ''
@@ -1034,7 +1104,7 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
             system_prompt: event.system_prompt ?? '',
             user_prompt: event.user_prompt ?? '',
             context_preview: event.context_preview ?? contextPreview.value ?? emptyContextPreview(),
-            model_profile_id: event.model_profile_id ?? selectedModelProfileId.value,
+            model_profile_id: event.model_profile_id ?? modelProfileId,
             prompt_template_id: event.prompt_template_id ?? null,
             conversation_id: event.conversation_id ?? selectedConversationId.value ?? null,
           }
@@ -1063,11 +1133,37 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
       generationError.value = error instanceof Error ? error.message : '生成失败'
     }
   } finally {
-    if (generationResult.value && selectedConversationId.value) {
-      await queryClient.invalidateQueries({ queryKey: ['llm-messages', selectedConversationId.value] })
-      streamingOutput.value = ''
-      reasoningOutput.value = ''
+    const conversationId = selectedConversationId.value
+    let refreshedMessages = conversationId
+      ? (queryClient.getQueryData<LLMConversationMessage[]>(['llm-messages', conversationId]) ?? [])
+      : []
+    if (conversationId) {
+      try {
+        refreshedMessages = await api.listLLMConversationMessages(conversationId)
+        queryClient.setQueryData(['llm-messages', conversationId], refreshedMessages)
+        void queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
+      } catch (error) {
+        if (!generationError.value) {
+          generationError.value = error instanceof Error ? error.message : '刷新对话消息失败'
+        }
+      }
     }
+    if (!regeneration && pendingUserMessage.value) {
+      const baselineIds = new Set(submittedMessageBaselineIds)
+      const persistedUserMessage = refreshedMessages.some(
+        (message) =>
+          message.role === 'user'
+          && message.content.trim() === instruction
+          && !baselineIds.has(message.id),
+      )
+      if (!persistedUserMessage && !generationResult.value) {
+        generationInstruction.value = instruction
+      }
+      pendingUserMessage.value = ''
+      pendingUserMessageBaselineIds.value = []
+    }
+    streamingOutput.value = ''
+    reasoningOutput.value = ''
     if (regeneration) {
       regeneratingMessageId.value = ''
     }
@@ -1080,22 +1176,30 @@ async function startGenerationStream(regeneration?: { instruction: string; messa
   }
 }
 
-function buildGenerateInput(instruction = generationInstruction.value.trim(), regenerateMessageId?: string): GenerateOnceInput {
+function buildGenerateInput(
+  instruction = generationInstruction.value.trim(),
+  regenerateMessageId?: string,
+  modelProfileId = selectedModelProfileId.value,
+  retryUserMessageId?: string,
+): GenerateOnceInput {
+  const modelProfile = modelProfiles.value.find((profile) => profile.id === modelProfileId)
+  const usesTemporaryModel = modelProfileId !== selectedModelProfileId.value
   return {
     project_id: props.projectId,
     block_id: props.blockId,
     task_type: generationTaskType.value,
-    model_profile_id: selectedModelProfileId.value,
+    model_profile_id: modelProfileId,
     prompt_template_id: selectedPromptTemplateId.value || null,
     selected_text: selectedTextForGeneration.value,
     user_instruction: instruction,
     context_node_count: contextNodeCount.value,
     conversation_id: selectedConversationId.value || null,
-    temperature: temperatureOverride.value,
-    top_p: topPOverride.value,
-    max_tokens: maxTokensOverride.value,
+    temperature: usesTemporaryModel ? modelProfile?.temperature : temperatureOverride.value,
+    top_p: usesTemporaryModel ? modelProfile?.top_p : topPOverride.value,
+    max_tokens: usesTemporaryModel ? modelProfile?.max_tokens : maxTokensOverride.value,
     excluded_context_item_ids: excludedContextItemIds.value,
     regenerate_message_id: regenerateMessageId,
+    retry_user_message_id: retryUserMessageId,
   }
 }
 
@@ -1162,6 +1266,7 @@ async function saveAssistantMessageAsRevision(message: LLMConversationMessage) {
 }
 
 function beginEditMessage(message: LLMConversationMessage) {
+  cancelRegenerationChoice()
   editingMessageId.value = message.id
   editingMessageContent.value = message.content
 }
@@ -1181,8 +1286,16 @@ function toggleMessageSelection(messageId: string) {
   selectedMessageIds.value = Array.from(selected)
 }
 
+function handleMessageSelectionKeydown(event: KeyboardEvent, messageId: string) {
+  if (!isSelectingMessages.value || event.target !== event.currentTarget) return
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  toggleMessageSelection(messageId)
+}
+
 function beginMessageSelection() {
   cancelEditMessage()
+  cancelRegenerationChoice()
   selectedMessageIds.value = []
   isSelectingMessages.value = true
 }
@@ -1199,20 +1312,46 @@ function confirmDeleteSelectedMessages() {
   deleteConversationMessages.mutate()
 }
 
-function regenerateMessage(message: LLMConversationMessage) {
+function beginRegenerateMessage(message: LLMConversationMessage) {
   if (isGenerationStreaming.value || isGenerationStarting.value || generateCandidates.isPending.value) return
   const messageIndex = conversationMessages.value.findIndex((item) => item.id === message.id)
   const target = message.role === 'assistant'
     ? message
-    : conversationMessages.value.slice(messageIndex + 1).find((item) => item.role === 'assistant')
+    : conversationMessages.value[messageIndex + 1]?.role === 'assistant'
+      ? conversationMessages.value[messageIndex + 1]
+      : undefined
   const source = message.role === 'user'
     ? message
     : conversationMessages.value.slice(0, messageIndex).reverse().find((item) => item.role === 'user')
-  if (!source || !target) {
-    generationError.value = '未找到这条消息对应的用户输入或 Agent 回复'
+  if (!source) {
+    generationError.value = '未找到这条消息对应的用户输入'
     return
   }
-  void startGenerationStream({ instruction: source.content, messageId: target.id })
+  regenerationRequest.value = {
+    instruction: source.content,
+    messageId: target?.id,
+    retryUserMessageId: target ? undefined : source.id,
+    anchorMessageId: message.id,
+  }
+  regenerationModelProfileId.value = selectedModelProfileId.value
+}
+
+function cancelRegenerationChoice() {
+  regenerationRequest.value = null
+  regenerationModelProfileId.value = ''
+}
+
+function confirmRegeneration() {
+  if (!regenerationRequest.value || !regenerationModelProfileId.value) return
+  const request = regenerationRequest.value
+  const modelProfileId = regenerationModelProfileId.value
+  cancelRegenerationChoice()
+  void startGenerationStream({
+    instruction: request.instruction,
+    messageId: request.messageId,
+    retryUserMessageId: request.retryUserMessageId,
+    modelProfileId,
+  })
 }
 
 function submitComposer() {
@@ -1428,15 +1567,56 @@ function replaceEditorSelectionWithGeneratedContent() {
             <AlertCircle :size="16" aria-hidden="true" />
             <span>{{ summaryError }}</span>
           </div>
-          <button
-            class="button button--primary"
-            type="button"
-            :disabled="!selectedModelProfileId || generateSummary.isPending.value"
-            @click="generateSummary.mutate()"
-          >
-            <RefreshCw :size="16" aria-hidden="true" />
-            {{ generateSummary.isPending.value ? '生成中' : currentSummary ? '刷新摘要' : '生成摘要' }}
-          </button>
+          <template v-if="manualSummaryMode">
+            <label class="field-label">
+              <span>{{ manualSummaryMode === 'edit' ? '编辑摘要' : '新增手动摘要' }}</span>
+              <textarea v-model="manualSummaryText" class="summary-panel__editor" rows="7" placeholder="直接撰写供后续上下文使用的摘要"></textarea>
+            </label>
+            <div class="summary-panel__actions">
+              <button class="button" type="button" @click="manualSummaryMode = null">取消</button>
+              <button
+                class="button button--primary"
+                type="button"
+                :disabled="!manualSummaryText.trim() || saveManualSummary.isPending.value"
+                @click="saveManualSummary.mutate()"
+              >
+                <Save :size="15" aria-hidden="true" />
+                {{ saveManualSummary.isPending.value ? '保存中' : '保存摘要' }}
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <select v-model="selectedSummaryPromptId">
+              <option value="">默认摘要 Prompt</option>
+              <option v-for="template in summaryPrompts" :key="template.id" :value="template.id">{{ template.name }}</option>
+            </select>
+            <div class="summary-panel__actions">
+              <button class="button" type="button" @click="openManualSummary('create')">
+                <Plus :size="15" aria-hidden="true" />手动新增
+              </button>
+              <button v-if="currentSummary" class="button" type="button" @click="openManualSummary('edit')">
+                <SquarePen :size="15" aria-hidden="true" />编辑摘要
+              </button>
+              <button
+                v-if="generateSummary.isPending.value"
+                class="button button--danger"
+                type="button"
+                @click="cancelSummaryGeneration"
+              >
+                <Square :size="14" aria-hidden="true" />取消生成
+              </button>
+              <button
+                v-else
+                class="button button--primary"
+                type="button"
+                :disabled="!selectedModelProfileId"
+                @click="generateSummary.mutate()"
+              >
+                <RefreshCw :size="16" aria-hidden="true" />
+                {{ currentSummary ? 'LLM 刷新' : 'LLM 生成' }}
+              </button>
+            </div>
+          </template>
         </div>
       </section>
 
@@ -1606,13 +1786,18 @@ function replaceEditorSelectionWithGeneratedContent() {
               v-for="message in conversationMessages"
               :key="message.id"
               class="chat-message"
-              :class="[`chat-message--${message.role}`, { 'chat-message--selected': selectedMessageIds.includes(message.id) }]"
+              :class="[
+                `chat-message--${message.role}`,
+                {
+                  'chat-message--selected': selectedMessageIds.includes(message.id),
+                  'chat-message--editing': editingMessageId === message.id,
+                },
+              ]"
               :role="isSelectingMessages ? 'button' : undefined"
               :tabindex="isSelectingMessages ? 0 : undefined"
               :aria-pressed="isSelectingMessages ? selectedMessageIds.includes(message.id) : undefined"
               @click="isSelectingMessages && toggleMessageSelection(message.id)"
-              @keydown.enter.prevent="isSelectingMessages && toggleMessageSelection(message.id)"
-              @keydown.space.prevent="isSelectingMessages && toggleMessageSelection(message.id)"
+              @keydown="handleMessageSelectionKeydown($event, message.id)"
             >
               <div class="chat-message__role">
                 <label v-if="isSelectingMessages" class="chat-message__selector" @click.stop>
@@ -1664,7 +1849,7 @@ function replaceEditorSelectionWithGeneratedContent() {
                     aria-label="重新生成"
                     data-tooltip="重新生成"
                     :disabled="isGenerationStreaming || generateCandidates.isPending.value"
-                    @click="regenerateMessage(message)"
+                    @click="beginRegenerateMessage(message)"
                   >
                     <RefreshCw :size="14" aria-hidden="true" />
                   </button>
@@ -1679,6 +1864,36 @@ function replaceEditorSelectionWithGeneratedContent() {
                   >
                     <Save :size="14" aria-hidden="true" />
                   </button>
+                </div>
+                <div
+                  v-if="regenerationRequest?.anchorMessageId === message.id"
+                  class="chat-message__regeneration-picker"
+                >
+                  <label>
+                    <span>使用模型</span>
+                    <select v-model="regenerationModelProfileId" aria-label="选择重新生成模型">
+                      <option
+                        v-for="profile in modelProfiles"
+                        :key="profile.id"
+                        :value="profile.id"
+                        :disabled="!profile.has_api_key"
+                      >
+                        {{ profile.name }} · {{ profile.model }}{{ profile.has_api_key ? '' : '（未配置 API Key）' }}
+                      </option>
+                    </select>
+                  </label>
+                  <div>
+                    <button class="button" type="button" @click="cancelRegenerationChoice">取消</button>
+                    <button
+                      class="button button--primary"
+                      type="button"
+                      :disabled="!regenerationModelProfileId"
+                      @click="confirmRegeneration"
+                    >
+                      <RefreshCw :size="14" aria-hidden="true" />
+                      重新生成
+                    </button>
+                  </div>
                 </div>
               </template>
             </article>

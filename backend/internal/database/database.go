@@ -219,7 +219,10 @@ func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
 					('局部改写', 'rewrite_selection', E'请在理解当前片段、前后文和硬设定的基础上改写选中文本，只输出改写后的选中文本。\n\n硬设定：\n{{canon_facts}}\n\n章节摘要：\n{{chapter_summary}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n选中文本：\n{{selected_text}}\n\n用户指令：\n{{user_instruction}}'),
 					('扩写', 'expand', E'请扩写当前片段，补充细节、动作和感官描写，必须遵守硬设定，只输出扩写后的正文。\n\n硬设定：\n{{canon_facts}}\n\n最近正文：\n{{recent_blocks}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}'),
 					('缩写', 'condense', E'请压缩当前片段，保留关键情节、风格和硬设定，只输出压缩后的正文。\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}'),
-					('润色', 'polish', E'请润色当前片段，提升表达和节奏，必须遵守硬设定，只输出润色后的正文。\n\n硬设定：\n{{canon_facts}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}')
+					('润色', 'polish', E'请润色当前片段，提升表达和节奏，必须遵守硬设定，只输出润色后的正文。\n\n硬设定：\n{{canon_facts}}\n\n相关记忆：\n{{memory_chunks}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}'),
+					('Block 摘要', 'block_summary', E'请准确、简洁地概括以下小说片段，保留关键人物、事件、因果、地点与未解决冲突，不添加原文没有的信息。只输出摘要正文。\n\n标题：{{title}}\n\n正文：\n{{content}}'),
+					('章节摘要', 'chapter_summary', E'请概括以下章节内容，保留情节推进、人物状态变化、重要设定与未解决冲突。只输出摘要正文。\n\n标题：{{title}}\n\n章节内容：\n{{content}}'),
+					('分支摘要', 'branch_summary', E'请将以下故事分支整理为连贯摘要，保留关键事件的先后与因果、人物状态变化、重要设定及未解决线索。输入可能是完整 Block 正文，也可能是用户选择的 Block 摘要。只输出摘要正文。\n\n分支：{{title}}\n\n内容：\n{{content}}')
 			) AS operation(name, task_type, template_text)
 			WHERE NOT EXISTS (
 				SELECT 1 FROM prompt_templates existing
@@ -256,6 +259,17 @@ func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
 			) THEN
 				PERFORM seed_default_prompt_operations(id) FROM projects;
 				INSERT INTO app_migrations (name) VALUES ('default_prompt_operations_v1');
+			END IF;
+		END;
+		$seed$;
+
+		DO $seed$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM app_migrations WHERE name = 'summary_prompt_operations_v1'
+			) THEN
+				PERFORM seed_default_prompt_operations(id) FROM projects;
+				INSERT INTO app_migrations (name) VALUES ('summary_prompt_operations_v1');
 			END IF;
 		END;
 		$seed$;

@@ -1,6 +1,8 @@
 # BranchScribe
 
-BranchScribe is an LLM API based nonlinear fiction writing tool.
+BranchScribe 是一个基于 LLM 的非线性故事创作工具。不同于传统的Chatbox式AI助手，而是一个面向长篇小说创作的文本工程系统。
+
+BranchScribe is an LLM based nonlinear fiction writing tool.
 
 ## Local Database
 

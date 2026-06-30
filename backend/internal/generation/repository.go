@@ -713,17 +713,41 @@ func (r *Repository) GetBlockSummarySource(ctx context.Context, projectID string
 	return source, nil
 }
 
-func (r *Repository) GetBranchSummarySource(ctx context.Context, projectID string, branchID string) (BlockSummarySource, error) {
-	source := BlockSummarySource{TargetType: "branch", TargetID: branchID}
+func (r *Repository) GetBranchSummarySource(ctx context.Context, projectID string, branchID string, mode string, selections []SummarySourceSelection) (BlockSummarySource, error) {
+	source := BlockSummarySource{
+		TargetType:       "branch",
+		TargetID:         branchID,
+		SourceMode:       mode,
+		SourceSelections: selections,
+	}
+	if mode == "" {
+		mode = "full_text"
+		source.SourceMode = mode
+	}
+	selectedModes := make(map[string]string, len(selections))
+	for _, selection := range selections {
+		selectedModes[selection.BlockID] = selection.Mode
+	}
 	if err := r.db.QueryRow(ctx, `
 		SELECT name FROM branches WHERE id = $1 AND project_id = $2
 	`, branchID, projectID).Scan(&source.Title); err != nil {
 		return BlockSummarySource{}, normalizeNotFound(err)
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT b.title, br.id::text, br.content, br.content_format
+		SELECT b.id::text, b.title, br.id::text, br.content, br.content_format,
+			latest_summary.summary_text
 		FROM blocks b
 		JOIN block_revisions br ON br.id = b.current_revision_id
+		LEFT JOIN LATERAL (
+			SELECT summary_text
+			FROM summary_snapshots
+			WHERE project_id = b.project_id
+				AND target_type IN ('block', 'chapter')
+				AND target_id = b.id
+				AND status = 'valid'
+			ORDER BY created_at DESC
+			LIMIT 1
+		) latest_summary ON true
 		WHERE b.project_id = $1 AND b.branch_id = $2
 		ORDER BY b.order_index, b.created_at
 	`, projectID, branchID)
@@ -732,23 +756,66 @@ func (r *Repository) GetBranchSummarySource(ctx context.Context, projectID strin
 	}
 	defer rows.Close()
 	var sections []string
+	foundBlocks := map[string]bool{}
 	for rows.Next() {
 		var title sql.NullString
-		var revisionID, content, contentFormat string
-		if err := rows.Scan(&title, &revisionID, &content, &contentFormat); err != nil {
+		var blockID, revisionID, content, contentFormat string
+		var summary sql.NullString
+		if err := rows.Scan(&blockID, &title, &revisionID, &content, &contentFormat, &summary); err != nil {
 			return BlockSummarySource{}, err
 		}
+		foundBlocks[blockID] = true
+		blockMode := ""
+		if len(selectedModes) > 0 {
+			blockMode = selectedModes[blockID]
+		}
+		if blockMode == "" {
+			switch mode {
+			case "prefer_block_summaries":
+				if summary.Valid {
+					blockMode = "summary"
+				} else {
+					blockMode = "full_text"
+				}
+			case "block_summaries_only":
+				if summary.Valid {
+					blockMode = "summary"
+				} else {
+					blockMode = "exclude"
+				}
+			default:
+				blockMode = "full_text"
+			}
+		}
+		if len(selectedModes) > 0 && selectedModes[blockID] == "" {
+			blockMode = "exclude"
+		}
+		if blockMode == "exclude" {
+			continue
+		}
+		body := normalizeBlockContent(content, contentFormat)
+		if blockMode == "summary" {
+			if !summary.Valid {
+				return BlockSummarySource{}, ErrInvalidGenerationRequest
+			}
+			body = summary.String
+		}
 		source.CoveredRevisionIDs = append(source.CoveredRevisionIDs, revisionID)
-		sections = append(sections, "## "+fallbackTitle(nullableText(title), "未命名片段")+"\n"+normalizeBlockContent(content, contentFormat))
+		sections = append(sections, "## "+fallbackTitle(nullableText(title), "未命名片段")+"\n"+body)
 	}
 	if err := rows.Err(); err != nil {
 		return BlockSummarySource{}, err
+	}
+	for blockID := range selectedModes {
+		if !foundBlocks[blockID] {
+			return BlockSummarySource{}, ErrInvalidGenerationRequest
+		}
 	}
 	source.Content = strings.Join(sections, "\n\n")
 	return source, nil
 }
 
-func (r *Repository) GetSummarySource(ctx context.Context, projectID string, summaryID string) (BlockSummarySource, error) {
+func (r *Repository) GetSummarySource(ctx context.Context, projectID string, summaryID string, sourceMode string, selections []SummarySourceSelection) (BlockSummarySource, error) {
 	var targetType, targetID string
 	if err := r.db.QueryRow(ctx, `
 		SELECT target_type, target_id::text
@@ -758,7 +825,7 @@ func (r *Repository) GetSummarySource(ctx context.Context, projectID string, sum
 		return BlockSummarySource{}, normalizeNotFound(err)
 	}
 	if targetType == "branch" {
-		return r.GetBranchSummarySource(ctx, projectID, targetID)
+		return r.GetBranchSummarySource(ctx, projectID, targetID, sourceMode, selections)
 	}
 	return r.GetBlockSummarySource(ctx, projectID, targetID)
 }
@@ -769,8 +836,11 @@ func (r *Repository) CreateSummary(ctx context.Context, projectID string, source
 		tokenCount = estimateTokens(result.Content)
 	}
 	metadata, err := json.Marshal(map[string]any{
-		"input_tokens":  result.InputTokens,
-		"output_tokens": result.OutputTokens,
+		"input_tokens":       result.InputTokens,
+		"output_tokens":      result.OutputTokens,
+		"source_mode":        source.SourceMode,
+		"source_selections":  source.SourceSelections,
+		"prompt_template_id": source.PromptTemplateID,
 	})
 	if err != nil {
 		return SummarySnapshot{}, err
@@ -778,8 +848,23 @@ func (r *Repository) CreateSummary(ctx context.Context, projectID string, source
 	return r.createSummarySnapshot(ctx, projectID, source, result.Content, tokenCount, model, "valid", metadata)
 }
 
+func (r *Repository) CreateManualSummary(ctx context.Context, projectID string, source BlockSummarySource, summaryText string) (SummarySnapshot, error) {
+	metadata, err := json.Marshal(map[string]any{
+		"source": "manual",
+	})
+	if err != nil {
+		return SummarySnapshot{}, err
+	}
+	return r.createSummarySnapshot(ctx, projectID, source, summaryText, estimateTokens(summaryText), "manual", "valid", metadata)
+}
+
 func (r *Repository) CreateFailedSummary(ctx context.Context, projectID string, source BlockSummarySource, model string, failure error) (SummarySnapshot, error) {
-	metadata, err := json.Marshal(map[string]any{"error": failure.Error()})
+	metadata, err := json.Marshal(map[string]any{
+		"error":              failure.Error(),
+		"source_mode":        source.SourceMode,
+		"source_selections":  source.SourceSelections,
+		"prompt_template_id": source.PromptTemplateID,
+	})
 	if err != nil {
 		return SummarySnapshot{}, err
 	}

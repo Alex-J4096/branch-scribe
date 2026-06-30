@@ -26,6 +26,7 @@ import type {
   GenerateStreamEvent,
   GraphEdge,
   GenerateSummaryInput,
+  ManualSummaryInput,
   MemoryChunk,
   MemoryChunkFromBlockInput,
   MemoryChunkInput,
@@ -229,7 +230,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  updateBranch: (branchId: string, input: { name?: string; description?: string; status?: Branch['status'] }) =>
+  updateBranch: (branchId: string, input: { name?: string; description?: string; status?: Branch['status']; metadata?: Record<string, unknown> }) =>
     request<Branch>(`/branches/${branchId}`, {
       method: 'PATCH',
       body: JSON.stringify(input),
@@ -456,20 +457,33 @@ export const api = {
       method: 'POST',
     }),
   listSummaries: (projectId: string) => request<SummarySnapshot[]>(`/projects/${projectId}/summaries`),
-  generateBlockSummary: (blockId: string, input: GenerateSummaryInput) =>
+  generateBlockSummary: (blockId: string, input: GenerateSummaryInput, signal?: AbortSignal) =>
     request<SummarySnapshot>(`/blocks/${blockId}/summarize`, {
       method: 'POST',
       body: JSON.stringify(input),
+      signal,
     }),
-  generateBranchSummary: (branchId: string, input: GenerateSummaryInput) =>
+  createManualBlockSummary: (blockId: string, input: ManualSummaryInput) =>
+    request<SummarySnapshot>(`/blocks/${blockId}/summaries`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateManualSummary: (summaryId: string, input: ManualSummaryInput) =>
+    request<SummarySnapshot>(`/summaries/${summaryId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  generateBranchSummary: (branchId: string, input: GenerateSummaryInput, signal?: AbortSignal) =>
     request<SummarySnapshot>(`/branches/${branchId}/summarize`, {
       method: 'POST',
       body: JSON.stringify(input),
+      signal,
     }),
-  refreshSummary: (summaryId: string, input: GenerateSummaryInput) =>
+  refreshSummary: (summaryId: string, input: GenerateSummaryInput, signal?: AbortSignal) =>
     request<SummarySnapshot>(`/summaries/${summaryId}/refresh`, {
       method: 'POST',
       body: JSON.stringify(input),
+      signal,
     }),
 
   listModelProfiles: () => request<ModelProfile[]>('/model-profiles'),

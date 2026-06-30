@@ -40,8 +40,10 @@ func RegisterRoutes(router gin.IRouter, handler *Handler) {
 	router.POST("/projects/:projectId/blocks/:blockId/check-consistency", handler.CheckConsistency)
 	router.POST("/projects/:projectId/blocks/:blockId/extract-events", handler.ExtractTimelineEvents)
 	router.POST("/blocks/:blockId/summarize", handler.GenerateBlockSummary)
+	router.POST("/blocks/:blockId/summaries", handler.CreateManualBlockSummary)
 	router.POST("/branches/:branchId/summarize", handler.GenerateBranchSummary)
 	router.POST("/summaries/:summaryId/refresh", handler.RefreshSummary)
+	router.PATCH("/summaries/:summaryId", handler.UpdateManualSummary)
 	router.GET("/projects/:projectId/summaries", handler.ListSummaries)
 }
 
@@ -596,6 +598,58 @@ func (h *Handler) GenerateBlockSummary(c *gin.Context) {
 	h.generateSummary(c, req, source)
 }
 
+func (h *Handler) CreateManualBlockSummary(c *gin.Context) {
+	var req ManualSummaryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_SUMMARY_REQUEST", "invalid summary request")
+		return
+	}
+	req, err := req.normalized()
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	source, err := h.repo.GetBlockSummarySource(c.Request.Context(), req.ProjectID, c.Param("blockId"))
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	snapshot, err := h.repo.CreateManualSummary(c.Request.Context(), req.ProjectID, source, req.SummaryText)
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "SUMMARY_SAVE_FAILED", "failed to save summary")
+		return
+	}
+	c.JSON(http.StatusCreated, api.Envelope{Data: snapshot, Error: nil})
+}
+
+func (h *Handler) UpdateManualSummary(c *gin.Context) {
+	var req ManualSummaryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_SUMMARY_REQUEST", "invalid summary request")
+		return
+	}
+	req, err := req.normalized()
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	source, err := h.repo.GetSummarySource(c.Request.Context(), req.ProjectID, c.Param("summaryId"), "full_text", nil)
+	if err != nil {
+		respondGenerationError(c, err)
+		return
+	}
+	if source.TargetType == "branch" {
+		api.RespondError(c, http.StatusBadRequest, "INVALID_SUMMARY_REQUEST", "branch summaries cannot be edited here")
+		return
+	}
+	snapshot, err := h.repo.CreateManualSummary(c.Request.Context(), req.ProjectID, source, req.SummaryText)
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "SUMMARY_SAVE_FAILED", "failed to save summary")
+		return
+	}
+	c.JSON(http.StatusCreated, api.Envelope{Data: snapshot, Error: nil})
+}
+
 func (h *Handler) GenerateBranchSummary(c *gin.Context) {
 	var req GenerateBranchSummaryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -607,7 +661,7 @@ func (h *Handler) GenerateBranchSummary(c *gin.Context) {
 		respondGenerationError(c, err)
 		return
 	}
-	source, err := h.repo.GetBranchSummarySource(c.Request.Context(), req.ProjectID, c.Param("branchId"))
+	source, err := h.repo.GetBranchSummarySource(c.Request.Context(), req.ProjectID, c.Param("branchId"), req.SourceMode, req.SourceSelections)
 	if err != nil {
 		respondGenerationError(c, err)
 		return
@@ -626,7 +680,7 @@ func (h *Handler) RefreshSummary(c *gin.Context) {
 		respondGenerationError(c, err)
 		return
 	}
-	source, err := h.repo.GetSummarySource(c.Request.Context(), req.ProjectID, c.Param("summaryId"))
+	source, err := h.repo.GetSummarySource(c.Request.Context(), req.ProjectID, c.Param("summaryId"), req.SourceMode, req.SourceSelections)
 	if err != nil {
 		respondGenerationError(c, err)
 		return
@@ -644,6 +698,7 @@ func (h *Handler) ListSummaries(c *gin.Context) {
 }
 
 func (h *Handler) generateSummary(c *gin.Context, req GenerateBlockSummaryRequest, source BlockSummarySource) {
+	source.PromptTemplateID = req.PromptTemplateID
 	profile, err := h.repo.GetModelProfile(c.Request.Context(), req.ProjectID, req.ModelProfileID)
 	if err != nil {
 		respondGenerationError(c, err)
@@ -673,14 +728,35 @@ func (h *Handler) generateSummary(c *gin.Context, req GenerateBlockSummaryReques
 	}
 	providerCtx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
+	taskType := source.TargetType + "_summary"
+	templateText := "请准确、简洁地概括以下小说内容，保留关键人物、事件、因果、地点与未解决冲突，不添加原文没有的信息。只输出摘要正文。\n\n内容类型：{{target_type}}\n标题：{{title}}\n\n正文：\n{{content}}"
+	if req.PromptTemplateID != nil {
+		template, templateErr := h.repo.GetPromptTemplate(c.Request.Context(), req.ProjectID, *req.PromptTemplateID)
+		if templateErr != nil {
+			respondGenerationError(c, templateErr)
+			return
+		}
+		if template.TaskType != taskType {
+			respondGenerationError(c, ErrInvalidGenerationRequest)
+			return
+		}
+		templateText = template.TemplateText
+	} else if template, templateErr := h.repo.GetDefaultPromptTemplate(c.Request.Context(), req.ProjectID, taskType); templateErr == nil {
+		templateText = template.TemplateText
+	}
+	prompt := strings.NewReplacer(
+		"{{target_type}}", source.TargetType,
+		"{{title}}", title,
+		"{{content}}", content,
+	).Replace(templateText)
 	result, err := h.provider.GenerateOnce(providerCtx, GenerateRequest{
 		Provider: profile.Provider,
 		Model:    profile.Model,
 		BaseURL:  baseURL,
 		APIKey:   *profile.APIKey,
 		Messages: []ChatMessage{
-			{Role: "system", Content: "你是小说编辑。请准确、简洁地概括内容，保留关键人物、事件、因果、地点与未解决冲突，不添加原文没有的信息。只输出摘要正文。"},
-			{Role: "user", Content: "内容类型：" + source.TargetType + "\n标题：" + title + "\n\n正文：\n" + content},
+			{Role: "system", Content: "你是小说编辑，请严格执行用户提供的摘要任务。"},
+			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.2,
 		TopP:        profile.TopP,
@@ -1003,11 +1079,16 @@ func (h *Handler) prepareGeneration(ctx context.Context, req GenerateOnceRequest
 			if err != nil {
 				return preparedGeneration{}, err
 			}
+		} else if req.RetryUserMessageID != nil {
+			historyForRequest, err = conversationHistoryBeforeUserRetry(history, *req.RetryUserMessageID)
+			if err != nil {
+				return preparedGeneration{}, err
+			}
 		}
 		for _, message := range historyForRequest {
 			messages = append(messages, ChatMessage{Role: message.Role, Content: message.Content})
 		}
-		if !req.SkipConversationSave && req.RegenerateMessageID == nil {
+		if !req.SkipConversationSave && req.RegenerateMessageID == nil && req.RetryUserMessageID == nil {
 			if _, err := h.repo.AppendConversationMessage(ctx, *req.ConversationID, "user", conversationUserContent(req), &run.ID); err != nil {
 				return preparedGeneration{}, err
 			}
@@ -1054,6 +1135,22 @@ func conversationHistoryBeforeRegeneration(history []ConversationMessage, target
 	}
 
 	return history[:sourceUserIndex], nil
+}
+
+func conversationHistoryBeforeUserRetry(history []ConversationMessage, targetUserID string) ([]ConversationMessage, error) {
+	for index, message := range history {
+		if message.ID != targetUserID {
+			continue
+		}
+		if message.Role != "user" {
+			return nil, ErrInvalidGenerationRequest
+		}
+		if index != len(history)-1 {
+			return nil, ErrInvalidGenerationRequest
+		}
+		return history[:index], nil
+	}
+	return nil, ErrGenerationResourceNotFound
 }
 
 func normalizeMessageIDs(messageIDs []string) ([]string, error) {

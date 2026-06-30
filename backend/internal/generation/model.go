@@ -48,6 +48,7 @@ type GenerateOnceRequest struct {
 	MaxTokens              *int     `json:"max_tokens"`
 	ExcludedContextItemIDs []string `json:"excluded_context_item_ids"`
 	RegenerateMessageID    *string  `json:"regenerate_message_id"`
+	RetryUserMessageID     *string  `json:"retry_user_message_id"`
 	SkipConversationSave   bool     `json:"-"`
 }
 
@@ -286,11 +287,28 @@ type CompletionResult struct {
 }
 
 type GenerateBlockSummaryRequest struct {
-	ProjectID      string `json:"project_id"`
-	ModelProfileID string `json:"model_profile_id"`
+	ProjectID        string                   `json:"project_id"`
+	ModelProfileID   string                   `json:"model_profile_id"`
+	PromptTemplateID *string                  `json:"prompt_template_id,omitempty"`
+	SourceMode       string                   `json:"source_mode,omitempty"`
+	SourceSelections []SummarySourceSelection `json:"source_selections,omitempty"`
 }
 
 type GenerateBranchSummaryRequest = GenerateBlockSummaryRequest
+
+type ManualSummaryRequest struct {
+	ProjectID   string `json:"project_id"`
+	SummaryText string `json:"summary_text"`
+}
+
+func (req ManualSummaryRequest) normalized() (ManualSummaryRequest, error) {
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	req.SummaryText = strings.TrimSpace(req.SummaryText)
+	if req.ProjectID == "" || req.SummaryText == "" {
+		return req, ErrInvalidGenerationRequest
+	}
+	return req, nil
+}
 
 type SummarySnapshot struct {
 	ID                 string          `json:"id"`
@@ -312,11 +330,47 @@ type BlockSummarySource struct {
 	Title              string
 	CoveredRevisionIDs []string
 	Content            string
+	SourceMode         string
+	SourceSelections   []SummarySourceSelection
+	PromptTemplateID   *string
+}
+
+type SummarySourceSelection struct {
+	BlockID string `json:"block_id"`
+	Mode    string `json:"mode"`
 }
 
 func (req GenerateBlockSummaryRequest) normalized() (GenerateBlockSummaryRequest, error) {
 	req.ProjectID = strings.TrimSpace(req.ProjectID)
 	req.ModelProfileID = strings.TrimSpace(req.ModelProfileID)
+	req.SourceMode = strings.TrimSpace(req.SourceMode)
+	if req.SourceMode == "" {
+		req.SourceMode = "full_text"
+	}
+	if req.SourceMode != "full_text" && req.SourceMode != "prefer_block_summaries" && req.SourceMode != "block_summaries_only" {
+		return req, ErrInvalidGenerationRequest
+	}
+	if req.PromptTemplateID != nil {
+		value := strings.TrimSpace(*req.PromptTemplateID)
+		if value == "" {
+			req.PromptTemplateID = nil
+		} else {
+			req.PromptTemplateID = &value
+		}
+	}
+	seenBlocks := map[string]bool{}
+	for index := range req.SourceSelections {
+		selection := &req.SourceSelections[index]
+		selection.BlockID = strings.TrimSpace(selection.BlockID)
+		selection.Mode = strings.TrimSpace(selection.Mode)
+		if selection.BlockID == "" || seenBlocks[selection.BlockID] {
+			return req, ErrInvalidGenerationRequest
+		}
+		if selection.Mode != "full_text" && selection.Mode != "summary" && selection.Mode != "exclude" {
+			return req, ErrInvalidGenerationRequest
+		}
+		seenBlocks[selection.BlockID] = true
+	}
 	if req.ProjectID == "" || req.ModelProfileID == "" {
 		return req, ErrInvalidGenerationRequest
 	}
@@ -378,7 +432,29 @@ func (req GenerateOnceRequest) normalized() (GenerateOnceRequest, error) {
 			req.ConversationID = &trimmed
 		}
 	}
+	if req.RegenerateMessageID != nil {
+		trimmed := strings.TrimSpace(*req.RegenerateMessageID)
+		if trimmed == "" {
+			req.RegenerateMessageID = nil
+		} else {
+			req.RegenerateMessageID = &trimmed
+		}
+	}
+	if req.RetryUserMessageID != nil {
+		trimmed := strings.TrimSpace(*req.RetryUserMessageID)
+		if trimmed == "" {
+			req.RetryUserMessageID = nil
+		} else {
+			req.RetryUserMessageID = &trimmed
+		}
+	}
 	if req.ProjectID == "" || req.BlockID == "" || req.TaskType == "" || req.ModelProfileID == "" {
+		return req, ErrInvalidGenerationRequest
+	}
+	if req.RegenerateMessageID != nil && req.RetryUserMessageID != nil {
+		return req, ErrInvalidGenerationRequest
+	}
+	if (req.RegenerateMessageID != nil || req.RetryUserMessageID != nil) && req.ConversationID == nil {
 		return req, ErrInvalidGenerationRequest
 	}
 	if req.ContextNodeCount == nil {

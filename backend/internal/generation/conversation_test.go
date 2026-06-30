@@ -54,6 +54,31 @@ func TestConversationHistoryBeforeRegenerationValidatesTarget(t *testing.T) {
 	}
 }
 
+func TestConversationHistoryBeforeUserRetryExcludesTargetAndLaterMessages(t *testing.T) {
+	history := []ConversationMessage{
+		{ID: "user-a", Role: "user", Content: "a"},
+		{ID: "assistant-a", Role: "assistant", Content: "reply-a"},
+		{ID: "user-b", Role: "user", Content: "b"},
+	}
+
+	got, err := conversationHistoryBeforeUserRetry(history, "user-b")
+	if err != nil {
+		t.Fatalf("history before user retry: %v", err)
+	}
+	if want := history[:2]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("retry history = %#v, want %#v", got, want)
+	}
+	if _, err := conversationHistoryBeforeUserRetry(history, "assistant-a"); !errors.Is(err, ErrInvalidGenerationRequest) {
+		t.Fatalf("assistant retry target error = %v", err)
+	}
+	if _, err := conversationHistoryBeforeUserRetry(history, "user-a"); !errors.Is(err, ErrInvalidGenerationRequest) {
+		t.Fatalf("non-latest user retry error = %v", err)
+	}
+	if _, err := conversationHistoryBeforeUserRetry(history, "missing"); !errors.Is(err, ErrGenerationResourceNotFound) {
+		t.Fatalf("missing retry target error = %v", err)
+	}
+}
+
 func TestNormalizeMessageIDs(t *testing.T) {
 	got, err := normalizeMessageIDs([]string{" message-a ", "message-b", "message-a"})
 	if err != nil {

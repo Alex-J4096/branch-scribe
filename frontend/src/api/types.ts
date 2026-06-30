@@ -291,6 +291,7 @@ export type GenerateOnceInput = {
   max_tokens?: number
   excluded_context_item_ids?: string[]
   regenerate_message_id?: string
+  retry_user_message_id?: string
 }
 
 export type LLMConversation = {
@@ -342,6 +343,17 @@ export type SummarySnapshot = {
 export type GenerateSummaryInput = {
   project_id: string
   model_profile_id: string
+  prompt_template_id?: string | null
+  source_mode?: 'full_text' | 'prefer_block_summaries' | 'block_summaries_only'
+  source_selections?: Array<{
+    block_id: string
+    mode: 'full_text' | 'summary' | 'exclude'
+  }>
+}
+
+export type ManualSummaryInput = {
+  project_id: string
+  summary_text: string
 }
 
 export type ContextPreview = {

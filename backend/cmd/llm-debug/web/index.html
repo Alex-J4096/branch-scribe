@@ -79,13 +79,24 @@
     const escapeHTML = (value = '') => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
     const time = value => value ? new Date(value).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '';
 
-    function render() {
+    let detailRenderTimer = null;
+
+    function renderRequests() {
       $('#requests').innerHTML = state.sessions.length ? state.sessions.map(session => `
         <button class="request ${session.request_id === state.selected ? 'active' : ''}" data-id="${escapeHTML(session.request_id)}">
           <div class="request-top"><span class="status ${session.status}"></span><span class="model">${escapeHTML(session.model || '等待请求信息')}</span></div>
           <div class="request-meta">${time(session.timestamp)} · ${session.messages?.length || 0} messages · ${session.status}</div>
         </button>`).join('') : '<div class="empty">暂无请求</div>';
-      document.querySelectorAll('.request').forEach(button => button.onclick = () => { state.selected = button.dataset.id; render(); });
+      document.querySelectorAll('.request').forEach(button => button.onclick = () => {
+        state.selected = button.dataset.id;
+        if (detailRenderTimer) clearTimeout(detailRenderTimer);
+        detailRenderTimer = null;
+        renderRequests();
+        renderDetail();
+      });
+    }
+
+    function renderDetail() {
       const session = state.sessions.find(item => item.request_id === state.selected);
       if (!session) {
         $('#detail').innerHTML = '<div class="empty">等待 LLM 请求<br>最终 messages、reasoning 和 content 会在这里出现</div>';
@@ -115,9 +126,30 @@
         </details></section>`;
     }
 
+    function render() {
+      renderRequests();
+      renderDetail();
+    }
+
+    function scheduleDetailRender(requestID) {
+      if (state.selected !== requestID || detailRenderTimer) return;
+      detailRenderTimer = setTimeout(() => {
+        detailRenderTimer = null;
+        if (state.selected === requestID) renderDetail();
+      }, 100);
+    }
+
     function applyEvent(event) {
-      if (event.type === 'clear') { state.sessions = []; state.selected = null; render(); return; }
+      if (event.type === 'clear') {
+        state.sessions = [];
+        state.selected = null;
+        if (detailRenderTimer) clearTimeout(detailRenderTimer);
+        detailRenderTimer = null;
+        render();
+        return;
+      }
       let session = state.sessions.find(item => item.request_id === event.request_id);
+      const isNewSession = !session;
       if (!session) {
         session = { request_id: event.request_id, timestamp: event.timestamp, messages: [], content: '', reasoning: '', status: 'running' };
         state.sessions.unshift(session);
@@ -128,8 +160,19 @@
       if (event.type === 'response') Object.assign(session, { content: event.content || '', reasoning: event.reasoning || '', input_tokens: event.input_tokens, output_tokens: event.output_tokens, status: 'done' });
       if (event.type === 'done') Object.assign(session, { input_tokens: event.input_tokens, output_tokens: event.output_tokens, status: 'done' });
       if (event.type === 'error') Object.assign(session, { error: event.error, status: 'error' });
-      if (!state.selected) state.selected = event.request_id;
-      render();
+      const selectedNewSession = !state.selected;
+      if (selectedNewSession) state.selected = event.request_id;
+      const isStreamingChunk = event.type === 'delta' || event.type === 'reasoning';
+      const listChanged = isNewSession || event.type === 'request' || event.type === 'response' || event.type === 'done' || event.type === 'error';
+      if (listChanged || selectedNewSession) renderRequests();
+      if (state.selected !== event.request_id) return;
+      if (isStreamingChunk) {
+        scheduleDetailRender(event.request_id);
+      } else {
+        if (detailRenderTimer) clearTimeout(detailRenderTimer);
+        detailRenderTimer = null;
+        renderDetail();
+      }
     }
 
     async function load() {
