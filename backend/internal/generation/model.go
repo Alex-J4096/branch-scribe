@@ -199,6 +199,7 @@ type GenerationRun struct {
 	OutputRevisionID     *string         `json:"output_revision_id"`
 	InputTokens          int             `json:"input_tokens"`
 	OutputTokens         int             `json:"output_tokens"`
+	FinishReason         *string         `json:"finish_reason"`
 	LatencyMS            int             `json:"latency_ms"`
 	Status               string          `json:"status"`
 	ErrorMessage         *string         `json:"error_message"`
@@ -286,6 +287,7 @@ type CompletionResult struct {
 	Reasoning    string
 	InputTokens  int
 	OutputTokens int
+	FinishReason string
 }
 
 type GenerateBlockSummaryRequest struct {
@@ -386,6 +388,7 @@ type TokenEvent struct {
 	Error        string
 	InputTokens  int
 	OutputTokens int
+	FinishReason string
 }
 
 type ContextPreview struct {

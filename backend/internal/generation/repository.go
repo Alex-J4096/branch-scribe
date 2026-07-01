@@ -1097,6 +1097,7 @@ func (r *Repository) CreateRun(ctx context.Context, input GenerationRunInput) (G
 			output_revision_id::text,
 			input_tokens,
 			output_tokens,
+			finish_reason,
 			latency_ms,
 			status,
 			error_message,
@@ -1109,7 +1110,7 @@ func (r *Repository) CreateRun(ctx context.Context, input GenerationRunInput) (G
 }
 
 func (r *Repository) MarkRunSucceeded(ctx context.Context, runID string, result CompletionResult, latencyMS int) (GenerationRun, error) {
-	run, err := scanGenerationRun(r.db.QueryRow(ctx, updateGenerationRunSQL, "succeeded", nil, result.InputTokens, result.OutputTokens, latencyMS, runID))
+	run, err := scanGenerationRun(r.db.QueryRow(ctx, updateGenerationRunSQL, "succeeded", nil, result.InputTokens, result.OutputTokens, latencyMS, nullableString(&result.FinishReason), runID))
 	if err != nil {
 		return GenerationRun{}, normalizeNotFound(err)
 	}
@@ -1117,7 +1118,7 @@ func (r *Repository) MarkRunSucceeded(ctx context.Context, runID string, result 
 }
 
 func (r *Repository) MarkRunFailed(ctx context.Context, runID string, message string, latencyMS int) (GenerationRun, error) {
-	run, err := scanGenerationRun(r.db.QueryRow(ctx, updateGenerationRunSQL, "failed", message, 0, 0, latencyMS, runID))
+	run, err := scanGenerationRun(r.db.QueryRow(ctx, updateGenerationRunSQL, "failed", message, 0, 0, latencyMS, nil, runID))
 	if err != nil {
 		return GenerationRun{}, normalizeNotFound(err)
 	}
@@ -1131,8 +1132,9 @@ const updateGenerationRunSQL = `
 		error_message = $2,
 		input_tokens = $3,
 		output_tokens = $4,
-		latency_ms = $5
-	WHERE id = $6
+		latency_ms = $5,
+		finish_reason = $6
+	WHERE id = $7
 	RETURNING
 		id::text,
 		project_id::text,
@@ -1149,6 +1151,7 @@ const updateGenerationRunSQL = `
 		output_revision_id::text,
 		input_tokens,
 		output_tokens,
+		finish_reason,
 		latency_ms,
 		status,
 		error_message,
@@ -1169,6 +1172,7 @@ func scanGenerationRun(scanner scanner) (GenerationRun, error) {
 	var promptTemplateID sql.NullString
 	var outputRevisionID sql.NullString
 	var errorMessage sql.NullString
+	var finishReason sql.NullString
 
 	err := scanner.Scan(
 		&run.ID,
@@ -1186,6 +1190,7 @@ func scanGenerationRun(scanner scanner) (GenerationRun, error) {
 		&outputRevisionID,
 		&run.InputTokens,
 		&run.OutputTokens,
+		&finishReason,
 		&run.LatencyMS,
 		&run.Status,
 		&errorMessage,
@@ -1219,6 +1224,9 @@ func scanGenerationRun(scanner scanner) (GenerationRun, error) {
 	}
 	if errorMessage.Valid {
 		run.ErrorMessage = &errorMessage.String
+	}
+	if finishReason.Valid {
+		run.FinishReason = &finishReason.String
 	}
 	if len(run.InputContextSnapshot) == 0 {
 		run.InputContextSnapshot = json.RawMessage(`{}`)

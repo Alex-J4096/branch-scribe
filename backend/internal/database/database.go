@@ -40,6 +40,9 @@ func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 
 func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, `
+		ALTER TABLE generation_runs
+			ADD COLUMN IF NOT EXISTS finish_reason TEXT;
+
 		ALTER TABLE model_profiles
 		DROP CONSTRAINT IF EXISTS model_profiles_api_key_ref_check;
 

@@ -1486,6 +1486,7 @@ branchscribe/
 * [x] 实现 GenerateStream。
 * [x] 实现 SSE 或 WebSocket 流式输出。
 * [x] 实现 generation run 记录。
+* [x] generation run 记录供应商 finish_reason，并将缺少 [DONE] 的流式响应标记为失败。
 * [x] 实现 LLM 输出保存为新 revision。
 * [x] 实现任务类型：free_write。
 * [x] 实现任务类型：continue。

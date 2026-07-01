@@ -270,6 +270,7 @@ export type GenerationRun = {
   output_revision_id: string | null
   input_tokens: number
   output_tokens: number
+  finish_reason: string | null
   latency_ms: number
   status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   error_message: string | null

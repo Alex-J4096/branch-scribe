@@ -222,6 +222,7 @@ CREATE TABLE IF NOT EXISTS generation_runs (
     output_revision_id UUID,
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
+    finish_reason TEXT,
     latency_ms INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending',
     error_message TEXT,

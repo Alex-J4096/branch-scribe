@@ -73,6 +73,7 @@ func (p *OpenAICompatibleProvider) GenerateOnce(ctx context.Context, req Generat
 		Reasoning:    firstNonEmpty(decoded.Choices[0].Message.ReasoningContent, decoded.Choices[0].Message.Reasoning),
 		InputTokens:  decoded.Usage.PromptTokens,
 		OutputTokens: decoded.Usage.CompletionTokens,
+		FinishReason: decoded.Choices[0].FinishReason,
 	}, nil
 }
 
@@ -123,6 +124,7 @@ func (p *OpenAICompatibleProvider) GenerateStream(ctx context.Context, req Gener
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		var inputTokens int
 		var outputTokens int
+		var finishReason string
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, ":") {
@@ -134,7 +136,7 @@ func (p *OpenAICompatibleProvider) GenerateStream(ctx context.Context, req Gener
 
 			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if payload == "[DONE]" {
-				events <- TokenEvent{Type: "done", InputTokens: inputTokens, OutputTokens: outputTokens}
+				events <- TokenEvent{Type: "done", InputTokens: inputTokens, OutputTokens: outputTokens, FinishReason: finishReason}
 				return
 			}
 
@@ -148,6 +150,9 @@ func (p *OpenAICompatibleProvider) GenerateStream(ctx context.Context, req Gener
 				outputTokens = decoded.Usage.CompletionTokens
 			}
 			for _, choice := range decoded.Choices {
+				if choice.FinishReason != "" {
+					finishReason = choice.FinishReason
+				}
 				if choice.Delta.Content != "" {
 					events <- TokenEvent{Type: "delta", Content: choice.Delta.Content}
 				}
@@ -161,7 +166,13 @@ func (p *OpenAICompatibleProvider) GenerateStream(ctx context.Context, req Gener
 			events <- TokenEvent{Type: "error", Error: err.Error()}
 			return
 		}
-		events <- TokenEvent{Type: "done", InputTokens: inputTokens, OutputTokens: outputTokens}
+		events <- TokenEvent{
+			Type:         "error",
+			Error:        "provider stream ended before [DONE]",
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			FinishReason: finishReason,
+		}
 	}()
 
 	return events, nil
@@ -188,7 +199,8 @@ type openAIChatCompletionRequest struct {
 
 type openAIChatCompletionResponse struct {
 	Choices []struct {
-		Message ChatMessage `json:"message"`
+		Message      ChatMessage `json:"message"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -198,7 +210,8 @@ type openAIChatCompletionResponse struct {
 
 type openAIChatCompletionStreamResponse struct {
 	Choices []struct {
-		Delta ChatMessage `json:"delta"`
+		Delta        ChatMessage `json:"delta"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
 		PromptTokens     int `json:"prompt_tokens"`

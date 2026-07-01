@@ -138,7 +138,7 @@
         <div class="title-row"><div><h2>调用详情 · ${escapeHTML(session.model)}</h2><div class="id">${escapeHTML(session.request_id)}</div></div><span class="chip">${escapeHTML(session.status)}</span></div>
         <div class="chips">
           <span class="chip">${escapeHTML(session.provider || 'provider')}</span><span class="chip">temperature ${session.temperature}</span>
-          <span class="chip">top_p ${session.top_p}</span><span class="chip">max_tokens ${session.max_tokens}</span>
+          <span class="chip">top_p ${session.top_p}</span><span class="chip">max_tokens ${session.max_tokens}</span><span class="chip">finish_reason ${escapeHTML(session.finish_reason || '—')}</span>
           <span class="chip">tokens ${session.input_tokens || 0} → ${session.output_tokens || 0}</span>
         </div>
         ${session.error ? `<div class="error">${escapeHTML(session.error)}</div>` : ''}
@@ -187,8 +187,8 @@
       if (event.type === 'request') Object.assign(session, event, { status: 'running' });
       if (event.type === 'delta') session.content += event.content || '';
       if (event.type === 'reasoning') session.reasoning += event.reasoning || '';
-      if (event.type === 'response') Object.assign(session, { content: event.content || '', reasoning: event.reasoning || '', input_tokens: event.input_tokens, output_tokens: event.output_tokens, status: 'done' });
-      if (event.type === 'done') Object.assign(session, { input_tokens: event.input_tokens, output_tokens: event.output_tokens, status: 'done' });
+      if (event.type === 'response') Object.assign(session, { content: event.content || '', reasoning: event.reasoning || '', input_tokens: event.input_tokens, output_tokens: event.output_tokens, finish_reason: event.finish_reason || '', status: 'done' });
+      if (event.type === 'done') Object.assign(session, { input_tokens: event.input_tokens, output_tokens: event.output_tokens, finish_reason: event.finish_reason || '', status: 'done' });
       if (event.type === 'error') Object.assign(session, { error: event.error, status: 'error' });
       const selectedNewSession = !state.selected;
       if (selectedNewSession) state.selected = event.request_id;

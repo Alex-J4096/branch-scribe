@@ -961,3 +961,11 @@
 - 增加角色列表滚动区域和无角色卡提示，保留原有 `character_ids` 保存协议与已保存关联回填逻辑。
 - 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍仅提示既有 bundle 体积警告。
 - 完成后勾选 `ARCHITECTURE.md` 中对应任务。
+
+### Step 97: 补全 LLM 生成结束原因日志
+
+- OpenAI-compatible 非流式与流式响应均解析供应商 `finish_reason`，保存到 `generation_runs.finish_reason`，并显示在 LLM Debug 页面与终端摘要中，便于区分正常停止、达到长度上限及其他结束原因。
+- 流式连接若未收到 `[DONE]` 就结束，不再误记为成功，而是以 `provider stream ended before [DONE]` 标记 generation run 失败。
+- 修复 Debug 页面实时事件合并遗漏 `finish_reason` 的问题，生成结束后无需刷新页面即可显示结束原因。
+- 为已有数据库增加兼容字段迁移，并补充 `finish_reason=length` 和流提前结束的 Provider 测试。
+- 完成后勾选 `ARCHITECTURE.md` 中对应任务。

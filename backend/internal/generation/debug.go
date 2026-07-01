@@ -26,6 +26,7 @@ type DebugEvent struct {
 	Reasoning    string        `json:"reasoning,omitempty"`
 	InputTokens  int           `json:"input_tokens,omitempty"`
 	OutputTokens int           `json:"output_tokens,omitempty"`
+	FinishReason string        `json:"finish_reason,omitempty"`
 	Error        string        `json:"error,omitempty"`
 }
 
@@ -97,6 +98,7 @@ func (p *DebugProvider) GenerateOnce(ctx context.Context, req GenerateRequest) (
 		Type: "response", RequestID: requestID, Timestamp: time.Now(),
 		Content: result.Content, Reasoning: result.Reasoning,
 		InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
+		FinishReason: result.FinishReason,
 	})
 	return result, nil
 }
@@ -118,6 +120,7 @@ func (p *DebugProvider) GenerateStream(ctx context.Context, req GenerateRequest)
 				Type: event.Type, RequestID: requestID, Timestamp: time.Now(),
 				Content: event.Content, Reasoning: event.Reasoning,
 				InputTokens: event.InputTokens, OutputTokens: event.OutputTokens, Error: event.Error,
+				FinishReason: event.FinishReason,
 			}
 			p.sink.Emit(debugEvent)
 			select {

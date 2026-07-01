@@ -1575,17 +1575,19 @@ p {
   box-shadow: 0 8px 18px rgba(43, 55, 72, 0.08);
   transition:
     background-color 140ms ease,
-    box-shadow 140ms ease;
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease;
 }
 
 .story-node.is-selected {
   z-index: 4;
-  background: #176f68;
-  color: #ffffff;
+  background: #ffffff;
+  color: #17242f;
   box-shadow:
-    0 0 0 3px #ffffff,
-    0 0 0 7px #176f68,
-    0 14px 28px rgba(17, 72, 68, 0.34);
+    0 0 0 2px #ffffff,
+    0 0 0 5px #286f68,
+    0 16px 30px rgba(24, 58, 62, 0.24);
 }
 
 .story-node__body {
@@ -1598,25 +1600,24 @@ p {
 
 .story-node__body.is-selected {
   font-weight: 700;
+  background: linear-gradient(90deg, rgba(40, 111, 104, 0.13), rgba(40, 111, 104, 0.025) 72%);
 }
 
 .story-node__body.is-selected::before {
   position: absolute;
-  right: 7px;
-  bottom: calc(100% + 8px);
-  padding: 3px 7px;
+  inset: 5px auto 5px 4px;
+  width: 3px;
   border-radius: 999px;
-  border: 2px solid #ffffff;
-  background: #114b47;
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(31, 78, 75, 0.24);
-  content: "已选中";
+  background: #286f68;
+  box-shadow: 0 0 8px rgba(40, 111, 104, 0.3);
+  content: "";
   pointer-events: none;
+}
+
+.story-node.is-selected .story-node__handle {
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px rgba(40, 111, 104, 0.42);
 }
 
 .story-node__body:hover .story-node__connect-zone,
@@ -1721,6 +1722,7 @@ p {
   stroke: #2f7d76;
   stroke-width: 2.5;
   filter: drop-shadow(0 1px 1px rgba(24, 33, 47, 0.16));
+  transition: stroke-width 140ms ease, filter 140ms ease, opacity 140ms ease;
 }
 
 .story-edge .vue-flow__edge-text {
@@ -1746,8 +1748,19 @@ p {
 }
 
 .story-edge.is-selected .vue-flow__edge-path {
-  stroke-width: 4;
-  filter: drop-shadow(0 0 4px rgba(47, 125, 118, 0.45));
+  filter:
+    drop-shadow(0 0 2px #ffffff)
+    drop-shadow(0 0 5px rgba(40, 111, 104, 0.6));
+}
+
+.story-edge.is-selected .vue-flow__edge-textbg {
+  fill: #e5f1ef;
+  stroke: #286f68;
+  stroke-width: 1;
+}
+
+.story-edge.is-selected .vue-flow__edge-text {
+  fill: #1f5c56;
 }
 
 .inspector {

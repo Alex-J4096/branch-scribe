@@ -874,6 +874,7 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 				Content:      output,
 				InputTokens:  event.InputTokens,
 				OutputTokens: event.OutputTokens,
+				FinishReason: event.FinishReason,
 			}, latencyMS)
 			if updateErr != nil {
 				writeSSE(c, GenerateStreamEvent{Type: "error", Error: "failed to update generation run"})

@@ -84,3 +84,14 @@ func TestDebugWebUIIncludesTaggedPromptFolding(t *testing.T) {
 		}
 	}
 }
+
+func TestDebugWebUIUpdatesFinishReasonFromLiveEvents(t *testing.T) {
+	content, err := webFiles.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(content)
+	if !strings.Contains(page, "finish_reason: event.finish_reason || ''") {
+		t.Fatal("debug UI does not merge finish_reason from live completion events")
+	}
+}

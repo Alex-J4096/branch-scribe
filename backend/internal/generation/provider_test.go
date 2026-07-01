@@ -19,7 +19,7 @@ func TestOpenAICompatibleProviderGenerateOnce(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"choices": [{"message": {"role": "assistant", "content": "生成结果", "reasoning_content": "推理内容"}}],
+			"choices": [{"message": {"role": "assistant", "content": "生成结果", "reasoning_content": "推理内容"}, "finish_reason": "length"}],
 			"usage": {"prompt_tokens": 12, "completion_tokens": 34}
 		}`))
 	}))
@@ -47,6 +47,9 @@ func TestOpenAICompatibleProviderGenerateOnce(t *testing.T) {
 	if result.InputTokens != 12 || result.OutputTokens != 34 {
 		t.Fatalf("unexpected usage: %+v", result)
 	}
+	if result.FinishReason != "length" {
+		t.Fatalf("unexpected finish reason: %q", result.FinishReason)
+	}
 }
 
 func TestOpenAICompatibleProviderGenerateStream(t *testing.T) {
@@ -60,7 +63,7 @@ func TestOpenAICompatibleProviderGenerateStream(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先分析\"}}]}\n\n"))
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"第一段\"}}]}\n\n"))
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"第二段\"}}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":22}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"第二段\"},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":22}}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
@@ -101,6 +104,33 @@ func TestOpenAICompatibleProviderGenerateStream(t *testing.T) {
 	}
 	if done.InputTokens != 11 || done.OutputTokens != 22 {
 		t.Fatalf("unexpected usage: %+v", done)
+	}
+	if done.FinishReason != "length" {
+		t.Fatalf("unexpected finish reason: %q", done.FinishReason)
+	}
+}
+
+func TestOpenAICompatibleProviderRejectsIncompleteStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"未完成\"}}]}\n\n"))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAICompatibleProvider()
+	events, err := provider.GenerateStream(context.Background(), GenerateRequest{
+		Model: "test-model", BaseURL: server.URL, APIKey: "test-key",
+		Messages: []ChatMessage{{Role: "user", Content: "继续写"}}, MaxTokens: 1024,
+	})
+	if err != nil {
+		t.Fatalf("GenerateStream returned error: %v", err)
+	}
+	var last TokenEvent
+	for event := range events {
+		last = event
+	}
+	if last.Type != "error" || !strings.Contains(last.Error, "before [DONE]") {
+		t.Fatalf("expected incomplete stream error, got %+v", last)
 	}
 }
 

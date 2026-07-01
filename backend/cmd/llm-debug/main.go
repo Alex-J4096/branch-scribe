@@ -33,6 +33,7 @@ type debugSession struct {
 	Reasoning    string                   `json:"reasoning"`
 	InputTokens  int                      `json:"input_tokens"`
 	OutputTokens int                      `json:"output_tokens"`
+	FinishReason string                   `json:"finish_reason"`
 	Status       string                   `json:"status"`
 	Error        string                   `json:"error"`
 }
@@ -126,10 +127,12 @@ func (h *debugHub) apply(event generation.DebugEvent) {
 		session.Reasoning = event.Reasoning
 		session.InputTokens = event.InputTokens
 		session.OutputTokens = event.OutputTokens
+		session.FinishReason = event.FinishReason
 		session.Status = "done"
 	case "done":
 		session.InputTokens = event.InputTokens
 		session.OutputTokens = event.OutputTokens
+		session.FinishReason = event.FinishReason
 		session.Status = "done"
 	case "error":
 		session.Error = event.Error
@@ -207,7 +210,7 @@ func (h *debugHub) printSummary(event generation.DebugEvent) {
 	case "request":
 		fmt.Fprintf(os.Stdout, "[%s] request model=%s messages=%d stream=%t\n", event.RequestID, event.Model, len(event.Messages), event.Stream)
 	case "done", "response":
-		fmt.Fprintf(os.Stdout, "[%s] done input_tokens=%d output_tokens=%d\n", event.RequestID, event.InputTokens, event.OutputTokens)
+		fmt.Fprintf(os.Stdout, "[%s] done input_tokens=%d output_tokens=%d finish_reason=%s\n", event.RequestID, event.InputTokens, event.OutputTokens, event.FinishReason)
 	case "error":
 		fmt.Fprintf(os.Stdout, "[%s] error: %s\n", event.RequestID, event.Error)
 	}

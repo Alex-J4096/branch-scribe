@@ -67,37 +67,55 @@ function buildFlowNodes(): Node[] {
 }
 
 function buildFlowEdges(): Edge[] {
-  return props.graph.edges.map((edge) => ({
-    id: edge.id,
-    type: 'smoothstep',
-    source: edge.source_block_id,
-    target: edge.target_block_id,
-    sourceHandle: 'source',
-    targetHandle: 'target',
-    label: edge.label ?? edge.edge_type,
-    animated: edge.edge_type === 'fork',
-    class: `story-edge story-edge--${edge.edge_type}${edge.id === props.selectedEdgeId ? ' is-selected' : ''}`,
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: edgeColor(edge.edge_type),
-      width: 20,
-      height: 20,
-      markerUnits: 'userSpaceOnUse',
-    },
-    style: {
-      stroke: edgeColor(edge.edge_type),
-      strokeWidth: 2.5,
-    },
-    labelBgStyle: {
-      fill: '#ffffff',
-      fillOpacity: 0.92,
-    },
-    labelStyle: {
-      fill: '#253241',
-      fontSize: 12,
-      fontWeight: 700,
-    },
-  }))
+  return props.graph.edges.map((edge) => {
+    const isSelected = edge.id === props.selectedEdgeId
+    return {
+      id: edge.id,
+      type: 'smoothstep',
+      source: edge.source_block_id,
+      target: edge.target_block_id,
+      sourceHandle: 'source',
+      targetHandle: 'target',
+      label: edge.label ?? edge.edge_type,
+      animated: edge.edge_type === 'fork',
+      class: `story-edge story-edge--${edge.edge_type}${isSelected ? ' is-selected' : ''}`,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: edgeColor(edge.edge_type),
+        width: 20,
+        height: 20,
+        markerUnits: 'userSpaceOnUse',
+      },
+      style: {
+        stroke: edgeColor(edge.edge_type),
+        strokeWidth: isSelected ? 4 : 2.5,
+      },
+      labelBgStyle: {
+        fill: '#ffffff',
+        fillOpacity: 0.92,
+      },
+      labelStyle: {
+        fill: '#253241',
+        fontSize: 12,
+        fontWeight: 700,
+      },
+    }
+  })
+}
+
+function selectBlock(blockId: string) {
+  emit('selectEdge', null)
+  emit('selectBlock', blockId)
+}
+
+function selectEdge(edgeId: string) {
+  emit('selectBlock', null)
+  emit('selectEdge', edgeId)
+}
+
+function clearSelection() {
+  emit('selectBlock', null)
+  emit('selectEdge', null)
 }
 
 function canCreateNextConnection(connection: Connection) {
@@ -246,9 +264,9 @@ async function updatePosition(event: { node: Node }) {
     :connect-on-click="false"
     :is-valid-connection="isValidConnection"
     :connection-line-type="ConnectionLineType.SmoothStep"
-    @node-click="({ node }) => emit('selectBlock', String(node.id))"
-    @edge-click="({ edge }) => emit('selectEdge', String(edge.id))"
-    @pane-click="emit('selectBlock', null); emit('selectEdge', null)"
+    @node-click="({ node }) => selectBlock(String(node.id))"
+    @edge-click="({ edge }) => selectEdge(String(edge.id))"
+    @pane-click="clearSelection"
     @node-drag-stop="updatePosition"
     @connect="createDraggedEdge"
   >
@@ -261,10 +279,10 @@ async function updatePosition(event: { node: Node }) {
       />
     </svg>
 
-    <template #node-default="{ id, data, selected }">
+    <template #node-default="{ id, data }">
       <div
         class="story-node__body"
-        :class="{ 'is-selected': selected || String(id) === selectedBlockId }"
+        :class="{ 'is-selected': String(id) === selectedBlockId }"
         :data-block-id="id"
         :aria-current="String(id) === selectedBlockId ? 'true' : undefined"
         @contextmenu.prevent="emit('forkBlock', String(id))"
