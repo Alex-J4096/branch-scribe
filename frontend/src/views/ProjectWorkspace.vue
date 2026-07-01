@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   ArrowLeft,
@@ -32,6 +32,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api/client'
 import BlockGraph from '@/components/graph/BlockGraph.vue'
+import DisplaySettingsMenu from '@/components/DisplaySettingsMenu.vue'
 import BlockInspector from '@/components/inspector/BlockInspector.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
 import type { CreateBlockInput, GraphEdge } from '@/api/types'
@@ -63,12 +64,20 @@ const branchEditName = ref('')
 const branchEditDescription = ref('')
 const branchActionError = ref('')
 const isLeftDrawerOpen = ref(true)
-const isToolWindowOpen = ref(true)
+const isToolWindowOpen = ref(false)
 const activeWorkspacePanel = ref<'sidebar' | 'editor' | 'llm'>('editor')
 const canvasRef = ref<HTMLElement | null>(null)
 const toolWindowRef = ref<HTMLElement | null>(null)
 const toolWindowPosition = ref<{ x: number; y: number } | null>(null)
+const toolWindowSize = ref<{ width: number; height: number } | null>(null)
 let toolDrag: { pointerId: number; offsetX: number; offsetY: number } | null = null
+let toolResize: {
+  pointerId: number
+  startX: number
+  startY: number
+  startWidth: number
+  startHeight: number
+} | null = null
 let branchSummaryAbortController: AbortController | null = null
 const openLeftSections = ref({
   branches: true,
@@ -271,7 +280,7 @@ const createBlock = useMutation({
   mutationFn: (input: CreateBlockInput) => api.createBlock(projectId.value, input),
   onSuccess: async (detail) => {
     newBlockTitle.value = ''
-    workspace.selectBlock(detail.block.id)
+    await selectBlock(detail.block.id)
     await queryClient.invalidateQueries({ queryKey: ['graph', projectId.value] })
   },
 })
@@ -405,7 +414,7 @@ async function forkBlockToNewBranch(blockId: string) {
     position_y: source.position_y + 120,
   })
   selectedBranchId.value = newBranch.id
-  workspace.selectBlock(forked.block.id)
+  await selectBlock(forked.block.id)
   await refreshWorkspace()
 }
 
@@ -537,6 +546,30 @@ function toggleLeftSection(section: keyof typeof openLeftSections.value) {
   openLeftSections.value[section] = !openLeftSections.value[section]
 }
 
+async function selectBlock(blockId: string | null) {
+  workspace.selectBlock(blockId)
+  if (!blockId) return
+
+  const wasOpen = isToolWindowOpen.value
+  isToolWindowOpen.value = true
+  if (!wasOpen && !toolWindowPosition.value) {
+    await nextTick()
+    placeToolWindowInSafeArea()
+  }
+}
+
+function placeToolWindowInSafeArea() {
+  if (!canvasRef.value || !toolWindowRef.value) return
+  const canvasRect = canvasRef.value.getBoundingClientRect()
+  const width = Math.min(toolWindowRef.value.offsetWidth, Math.max(0, canvasRect.width - 24))
+  const height = Math.min(toolWindowRef.value.offsetHeight, Math.max(0, canvasRect.height - 24))
+  if (toolWindowSize.value) toolWindowSize.value = { width, height }
+  toolWindowPosition.value = {
+    x: Math.max(12, canvasRect.width - width - 12),
+    y: 12,
+  }
+}
+
 function startToolDrag(event: PointerEvent) {
   if (event.button !== 0 || !canvasRef.value || !toolWindowRef.value) return
   const canvasRect = canvasRef.value.getBoundingClientRect()
@@ -573,6 +606,49 @@ function stopToolDrag(event: PointerEvent) {
   window.removeEventListener('pointerup', stopToolDrag)
 }
 
+function startToolResize(event: PointerEvent) {
+  if (event.button !== 0 || !toolWindowRef.value || !canvasRef.value) return
+  const canvasRect = canvasRef.value.getBoundingClientRect()
+  const windowRect = toolWindowRef.value.getBoundingClientRect()
+  toolWindowPosition.value = {
+    x: windowRect.left - canvasRect.left,
+    y: windowRect.top - canvasRect.top,
+  }
+  toolResize = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startWidth: toolWindowRef.value.offsetWidth,
+    startHeight: toolWindowRef.value.offsetHeight,
+  }
+  window.addEventListener('pointermove', resizeToolWindow)
+  window.addEventListener('pointerup', stopToolResize)
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function resizeToolWindow(event: PointerEvent) {
+  if (!toolResize || event.pointerId !== toolResize.pointerId || !canvasRef.value || !toolWindowRef.value) return
+  const canvasRect = canvasRef.value.getBoundingClientRect()
+  const windowRect = toolWindowRef.value.getBoundingClientRect()
+  const minWidth = Math.min(520, canvasRect.width)
+  const minHeight = Math.min(360, canvasRect.height)
+  toolWindowSize.value = {
+    width: Math.min(canvasRect.right - windowRect.left, Math.max(minWidth, toolResize.startWidth + event.clientX - toolResize.startX)),
+    height: Math.min(canvasRect.bottom - windowRect.top, Math.max(minHeight, toolResize.startHeight + event.clientY - toolResize.startY)),
+  }
+}
+
+function stopToolResize(event: PointerEvent) {
+  if (!toolResize || event.pointerId !== toolResize.pointerId) return
+  toolResize = null
+  window.removeEventListener('pointermove', resizeToolWindow)
+  window.removeEventListener('pointerup', stopToolResize)
+  if (toolWindowSize.value) {
+    localStorage.setItem('branchscribe:block-tool-size', JSON.stringify(toolWindowSize.value))
+  }
+}
+
 function openBlockToolInNewTab() {
   if (!selectedBlock.value) return
   const target = router.resolve({
@@ -582,10 +658,27 @@ function openBlockToolInNewTab() {
   window.open(target.href, '_blank', 'noopener,noreferrer')
 }
 
+onMounted(() => {
+  workspace.selectBlock(null)
+  const savedSize = localStorage.getItem('branchscribe:block-tool-size')
+  if (savedSize) {
+    try {
+      const parsed = JSON.parse(savedSize) as { width?: number; height?: number }
+      if (Number.isFinite(parsed.width) && Number.isFinite(parsed.height)) {
+        toolWindowSize.value = { width: Number(parsed.width), height: Number(parsed.height) }
+      }
+    } catch {
+      localStorage.removeItem('branchscribe:block-tool-size')
+    }
+  }
+})
+
 onBeforeUnmount(() => {
   branchSummaryAbortController?.abort()
   window.removeEventListener('pointermove', moveToolWindow)
   window.removeEventListener('pointerup', stopToolDrag)
+  window.removeEventListener('pointermove', resizeToolWindow)
+  window.removeEventListener('pointerup', stopToolResize)
 })
 
 function blockLabel(blockId: string) {
@@ -624,6 +717,7 @@ async function refreshWorkspace() {
         <strong>{{ projectQuery.data.value?.name ?? 'BranchScribe' }}</strong>
         <span>{{ graph.nodes.length }} blocks</span>
       </div>
+      <DisplaySettingsMenu />
       <nav class="workspace__nav" aria-label="项目工具">
         <button class="button" type="button" @click="refreshWorkspace">
           <RefreshCw :size="16" aria-hidden="true" />
@@ -815,7 +909,7 @@ async function refreshWorkspace() {
           <div v-if="openLeftSections.blockList && blocks.length === 0" class="empty-state empty-state--compact">暂无 block</div>
           <ul v-if="openLeftSections.blockList && blocks.length > 0" class="block-list">
             <li v-for="block in blocks" :key="block.id" class="block-list__row" :class="{ 'is-active': block.id === workspace.selectedBlockId }">
-              <button class="block-list__select" type="button" @click="workspace.selectBlock(block.id)">
+              <button class="block-list__select" type="button" @click="selectBlock(block.id)">
                 <span>{{ blockLabel(block.id) }}</span>
                 <small>{{ block.type }} · 出 {{ edgeCount(block.id, 'out') }} · 入 {{ edgeCount(block.id, 'in') }}</small>
               </button>
@@ -921,7 +1015,7 @@ async function refreshWorkspace() {
         :branch-colors="branchColors"
         :selected-block-id="workspace.selectedBlockId"
         :selected-edge-id="selectedEdgeId"
-        @select-block="workspace.selectBlock"
+        @select-block="selectBlock"
         @select-edge="selectEdge"
         @fork-block="forkBlockToNewBranch"
       />
@@ -929,7 +1023,10 @@ async function refreshWorkspace() {
         v-if="isToolWindowOpen"
         ref="toolWindowRef"
         class="workspace-tool-window"
-        :style="toolWindowPosition ? { left: `${toolWindowPosition.x}px`, top: `${toolWindowPosition.y}px`, right: 'auto', bottom: 'auto' } : undefined"
+        :style="{
+          ...(toolWindowPosition ? { left: `${toolWindowPosition.x}px`, top: `${toolWindowPosition.y}px`, right: 'auto', bottom: 'auto' } : {}),
+          ...(toolWindowSize ? { width: `${toolWindowSize.width}px`, height: `${toolWindowSize.height}px` } : {}),
+        }"
       >
         <div class="workspace-tool-window__bar" @pointerdown="startToolDrag">
           <strong>
@@ -991,9 +1088,16 @@ async function refreshWorkspace() {
           />
           <div v-else class="empty-state empty-state--panel">选择一个 block</div>
         </div>
+        <button
+          class="workspace-tool-window__resize-handle"
+          type="button"
+          aria-label="调整 Block 工具窗口大小"
+          title="拖动调整窗口大小"
+          @pointerdown="startToolResize"
+        />
       </section>
       <button
-        v-else
+        v-else-if="selectedBlock"
         class="workspace-tool-window__launcher button"
         type="button"
         title="打开 Block 工具"

@@ -5,6 +5,7 @@ import { BookOpen, Database, Plus, Settings, Trash2, Upload, X } from 'lucide-vu
 import { useRouter } from 'vue-router'
 
 import { api } from '@/api/client'
+import DisplaySettingsMenu from '@/components/DisplaySettingsMenu.vue'
 
 const router = useRouter()
 const queryClient = useQueryClient()
@@ -84,6 +85,7 @@ function handleImport(event: Event) {
         </div>
         <div class="project-list__actions">
           <Database :size="28" aria-hidden="true" />
+          <DisplaySettingsMenu />
           <input ref="importInput" class="visually-hidden" type="file" accept="application/json,.json" @change="handleImport" />
           <button class="button" type="button" @click="router.push({ name: 'model-profiles' })">
             <Settings :size="17" aria-hidden="true" />
