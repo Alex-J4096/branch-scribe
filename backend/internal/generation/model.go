@@ -155,15 +155,19 @@ type Conversation struct {
 }
 
 type ConversationMessage struct {
-	ID              string          `json:"id"`
-	ConversationID  string          `json:"conversation_id"`
-	Role            string          `json:"role"`
-	Content         string          `json:"content"`
-	GenerationRunID *string         `json:"generation_run_id"`
-	Model           *string         `json:"model"`
-	ContextSnapshot json.RawMessage `json:"-"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID                  string          `json:"id"`
+	ConversationID      string          `json:"conversation_id"`
+	Role                string          `json:"role"`
+	Content             string          `json:"content"`
+	GenerationRunID     *string         `json:"generation_run_id"`
+	Model               *string         `json:"model"`
+	InputTokens         int             `json:"input_tokens"`
+	OutputTokens        int             `json:"output_tokens"`
+	LatencyMS           int             `json:"latency_ms"`
+	FirstTokenLatencyMS int             `json:"first_token_latency_ms"`
+	ContextSnapshot     json.RawMessage `json:"-"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
 }
 
 type CreateConversationRequest struct {
@@ -201,6 +205,7 @@ type GenerationRun struct {
 	OutputTokens         int             `json:"output_tokens"`
 	FinishReason         *string         `json:"finish_reason"`
 	LatencyMS            int             `json:"latency_ms"`
+	FirstTokenLatencyMS  int             `json:"first_token_latency_ms"`
 	Status               string          `json:"status"`
 	ErrorMessage         *string         `json:"error_message"`
 	CreatedAt            time.Time       `json:"created_at"`

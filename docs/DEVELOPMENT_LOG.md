@@ -969,3 +969,19 @@
 - 修复 Debug 页面实时事件合并遗漏 `finish_reason` 的问题，生成结束后无需刷新页面即可显示结束原因。
 - 为已有数据库增加兼容字段迁移，并补充 `finish_reason=length` 和流提前结束的 Provider 测试。
 - 完成后勾选 `ARCHITECTURE.md` 中对应任务。
+
+### Step 98: 展示 Block LLM 对话生成指标
+
+- 在流式生成链路记录首次收到 reasoning 或正文增量的延时，并通过数据库兼容迁移为已有环境补充 `first_token_latency_ms`。
+- Block LLM 对话的 assistant 历史消息接口新增总耗时、输入/输出 Token 和首次返回延时。
+- assistant 消息下方展示思考用时、输入/输出 Token、首次返回延时及首包后的平均生成速度。
+- 运行 `go test ./...`、`npm run typecheck` 和 `npm run build`，均通过；Vite 仍仅提示既有 bundle 体积警告。
+- 完成后勾选 `ARCHITECTURE.md` 中对应任务。
+
+### Step 99: 为整段 LLM 对话删除增加二次确认
+
+- Block 工具删除整个 LLM 对话前显示确认提示，明确该对话的所有消息会被永久删除。
+- 用户取消确认时不发送删除请求；确认后禁用删除按钮直至请求结束，避免重复提交。
+- 删除失败时在 LLM 消息区展示错误；取消正在进行的 LLM 生成仍保持直接执行，不增加确认步骤。
+- 运行 `npm run typecheck` 和 `npm run build`，均通过；Vite 仍仅提示既有 bundle 体积警告。
+- 完成后勾选 `ARCHITECTURE.md` 中对应任务。

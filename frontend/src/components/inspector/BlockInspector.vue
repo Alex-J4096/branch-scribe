@@ -472,6 +472,9 @@ const deleteConversation = useMutation({
     selectedConversationId.value = ''
     await queryClient.invalidateQueries({ queryKey: ['llm-conversations', props.blockId] })
   },
+  onError: (error) => {
+    generationError.value = error instanceof Error ? error.message : '删除对话失败'
+  },
 })
 
 const updateConversationMessage = useMutation({
@@ -1293,6 +1296,17 @@ function beginEditMessage(message: LLMConversationMessage) {
   editingMessageContent.value = message.content
 }
 
+function formatDuration(milliseconds: number) {
+  if (milliseconds < 1000) return `${milliseconds} ms`
+  return `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 2 : 1)} s`
+}
+
+function messageTokensPerSecond(message: LLMConversationMessage) {
+  const generationDurationMS = message.latency_ms - message.first_token_latency_ms
+  if (message.output_tokens <= 0 || generationDurationMS <= 0) return null
+  return message.output_tokens / (generationDurationMS / 1000)
+}
+
 function cancelEditMessage() {
   editingMessageId.value = ''
   editingMessageContent.value = ''
@@ -1332,6 +1346,15 @@ function confirmDeleteSelectedMessages() {
   if (!count || !selectedConversationId.value) return
   if (!window.confirm(`确定删除选中的 ${count} 条消息吗？此操作不可恢复。`)) return
   deleteConversationMessages.mutate()
+}
+
+function confirmDeleteConversation() {
+  const conversationId = selectedConversationId.value
+  if (!conversationId || deleteConversation.isPending.value) return
+  const conversationTitle = conversations.value.find((item) => item.id === conversationId)?.title ?? '当前对话'
+  if (!window.confirm(`确定删除整个对话“${conversationTitle}”吗？其中的所有消息都会被永久删除，此操作不可恢复。`)) return
+  generationError.value = ''
+  deleteConversation.mutate(conversationId)
 }
 
 function beginRegenerateMessage(message: LLMConversationMessage) {
@@ -1792,8 +1815,8 @@ function replaceEditorSelectionWithGeneratedContent() {
               class="icon-button"
               type="button"
               title="删除当前对话"
-              :disabled="!selectedConversationId"
-              @click="selectedConversationId && deleteConversation.mutate(selectedConversationId)"
+              :disabled="!selectedConversationId || deleteConversation.isPending.value"
+              @click="confirmDeleteConversation"
             >
               <Trash2 :size="16" aria-hidden="true" />
             </button>
@@ -1862,6 +1885,19 @@ function replaceEditorSelectionWithGeneratedContent() {
               <template v-else>
                 <div class="chat-message__content">
                   {{ regeneratingMessageId === message.id ? (streamingOutput || '正在重新生成…') : message.content }}
+                </div>
+                <div
+                  v-if="message.role === 'assistant' && message.generation_run_id"
+                  class="chat-message__metrics"
+                  aria-label="生成性能信息"
+                >
+                  <span>思考用时 {{ formatDuration(message.latency_ms) }}</span>
+                  <span>输入 {{ message.input_tokens }} tokens</span>
+                  <span>输出 {{ message.output_tokens }} tokens</span>
+                  <span>首次返回 {{ formatDuration(message.first_token_latency_ms) }}</span>
+                  <span v-if="messageTokensPerSecond(message) !== null">
+                    {{ messageTokensPerSecond(message)?.toFixed(1) }} tokens/s
+                  </span>
                 </div>
                 <div v-if="!isSelectingMessages" class="chat-message__actions">
                   <button

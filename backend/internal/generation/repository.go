@@ -100,6 +100,8 @@ func (r *Repository) ListConversationMessages(ctx context.Context, conversationI
 	rows, err := r.db.Query(ctx, `
 		SELECT message.id::text, message.conversation_id::text, message.role, message.content,
 			message.generation_run_id::text, run.model, run.input_context_snapshot,
+			COALESCE(run.input_tokens, 0), COALESCE(run.output_tokens, 0),
+			COALESCE(run.latency_ms, 0), COALESCE(run.first_token_latency_ms, 0),
 			message.created_at, message.updated_at
 		FROM llm_messages AS message
 		LEFT JOIN generation_runs AS run ON run.id = message.generation_run_id
@@ -135,7 +137,7 @@ func (r *Repository) AppendConversationMessage(ctx context.Context, conversation
 		INSERT INTO llm_messages (conversation_id, role, content, generation_run_id)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text,
-			NULL::text, NULL::jsonb, created_at, updated_at
+			NULL::text, NULL::jsonb, 0, 0, 0, 0, created_at, updated_at
 	`, conversationID, role, content, nullableString(runID)))
 	if err != nil {
 		return ConversationMessage{}, normalizeNotFound(err)
@@ -177,7 +179,7 @@ func (r *Repository) UpdateConversationMessage(ctx context.Context, messageID st
 	message, err := scanConversationMessage(tx.QueryRow(ctx, `
 		UPDATE llm_messages SET content = $2, updated_at = now() WHERE id = $1
 		RETURNING id::text, conversation_id::text, role, content, generation_run_id::text,
-			NULL::text, NULL::jsonb, created_at, updated_at
+			NULL::text, NULL::jsonb, 0, 0, 0, 0, created_at, updated_at
 	`, messageID, content))
 	if err != nil {
 		return ConversationMessage{}, err
@@ -247,7 +249,8 @@ func scanConversationMessage(scanner conversationMessageScanner) (ConversationMe
 	var contextSnapshot []byte
 	err := scanner.Scan(
 		&message.ID, &message.ConversationID, &message.Role, &message.Content,
-		&runID, &model, &contextSnapshot, &message.CreatedAt, &message.UpdatedAt,
+		&runID, &model, &contextSnapshot, &message.InputTokens, &message.OutputTokens,
+		&message.LatencyMS, &message.FirstTokenLatencyMS, &message.CreatedAt, &message.UpdatedAt,
 	)
 	if runID.Valid {
 		message.GenerationRunID = &runID.String
@@ -1099,6 +1102,7 @@ func (r *Repository) CreateRun(ctx context.Context, input GenerationRunInput) (G
 			output_tokens,
 			finish_reason,
 			latency_ms,
+			first_token_latency_ms,
 			status,
 			error_message,
 			created_at
@@ -1109,8 +1113,12 @@ func (r *Repository) CreateRun(ctx context.Context, input GenerationRunInput) (G
 	return run, nil
 }
 
-func (r *Repository) MarkRunSucceeded(ctx context.Context, runID string, result CompletionResult, latencyMS int) (GenerationRun, error) {
-	run, err := scanGenerationRun(r.db.QueryRow(ctx, updateGenerationRunSQL, "succeeded", nil, result.InputTokens, result.OutputTokens, latencyMS, nullableString(&result.FinishReason), runID))
+func (r *Repository) MarkRunSucceeded(ctx context.Context, runID string, result CompletionResult, latencyMS int, firstTokenLatencyMS ...int) (GenerationRun, error) {
+	firstTokenMS := latencyMS
+	if len(firstTokenLatencyMS) > 0 {
+		firstTokenMS = firstTokenLatencyMS[0]
+	}
+	run, err := scanGenerationRun(r.db.QueryRow(ctx, updateGenerationRunSQL, "succeeded", nil, result.InputTokens, result.OutputTokens, latencyMS, nullableString(&result.FinishReason), firstTokenMS, runID))
 	if err != nil {
 		return GenerationRun{}, normalizeNotFound(err)
 	}
@@ -1118,7 +1126,7 @@ func (r *Repository) MarkRunSucceeded(ctx context.Context, runID string, result 
 }
 
 func (r *Repository) MarkRunFailed(ctx context.Context, runID string, message string, latencyMS int) (GenerationRun, error) {
-	run, err := scanGenerationRun(r.db.QueryRow(ctx, updateGenerationRunSQL, "failed", message, 0, 0, latencyMS, nil, runID))
+	run, err := scanGenerationRun(r.db.QueryRow(ctx, updateGenerationRunSQL, "failed", message, 0, 0, latencyMS, nil, 0, runID))
 	if err != nil {
 		return GenerationRun{}, normalizeNotFound(err)
 	}
@@ -1133,8 +1141,9 @@ const updateGenerationRunSQL = `
 		input_tokens = $3,
 		output_tokens = $4,
 		latency_ms = $5,
-		finish_reason = $6
-	WHERE id = $7
+		finish_reason = $6,
+		first_token_latency_ms = $7
+	WHERE id = $8
 	RETURNING
 		id::text,
 		project_id::text,
@@ -1153,6 +1162,7 @@ const updateGenerationRunSQL = `
 		output_tokens,
 		finish_reason,
 		latency_ms,
+		first_token_latency_ms,
 		status,
 		error_message,
 		created_at
@@ -1192,6 +1202,7 @@ func scanGenerationRun(scanner scanner) (GenerationRun, error) {
 		&run.OutputTokens,
 		&finishReason,
 		&run.LatencyMS,
+		&run.FirstTokenLatencyMS,
 		&run.Status,
 		&errorMessage,
 		&run.CreatedAt,

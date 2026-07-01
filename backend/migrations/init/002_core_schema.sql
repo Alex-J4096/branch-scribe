@@ -224,13 +224,15 @@ CREATE TABLE IF NOT EXISTS generation_runs (
     output_tokens INTEGER NOT NULL DEFAULT 0,
     finish_reason TEXT,
     latency_ms INTEGER NOT NULL DEFAULT 0,
+    first_token_latency_ms INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending',
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT generation_runs_status_check CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')),
     CONSTRAINT generation_runs_input_tokens_check CHECK (input_tokens >= 0),
     CONSTRAINT generation_runs_output_tokens_check CHECK (output_tokens >= 0),
-    CONSTRAINT generation_runs_latency_ms_check CHECK (latency_ms >= 0)
+    CONSTRAINT generation_runs_latency_ms_check CHECK (latency_ms >= 0),
+    CONSTRAINT generation_runs_first_token_latency_ms_check CHECK (first_token_latency_ms >= 0)
 );
 
 DO $$

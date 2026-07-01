@@ -836,12 +836,19 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 
 	var output string
 	var reasoning string
+	firstTokenLatencyMS := 0
 	for event := range stream {
 		switch event.Type {
 		case "delta":
+			if firstTokenLatencyMS == 0 {
+				firstTokenLatencyMS = int(time.Since(startedAt).Milliseconds())
+			}
 			output += event.Content
 			writeSSE(c, GenerateStreamEvent{Type: "delta", Content: event.Content})
 		case "reasoning":
+			if firstTokenLatencyMS == 0 {
+				firstTokenLatencyMS = int(time.Since(startedAt).Milliseconds())
+			}
 			reasoning += event.Reasoning
 			writeSSE(c, GenerateStreamEvent{Type: "reasoning", Reasoning: event.Reasoning})
 		case "error":
@@ -869,13 +876,16 @@ func (h *Handler) GenerateStream(c *gin.Context) {
 			return
 		case "done":
 			latencyMS := int(time.Since(startedAt).Milliseconds())
+			if firstTokenLatencyMS == 0 {
+				firstTokenLatencyMS = latencyMS
+			}
 			run := prepared.Run
 			succeededRun, updateErr := h.repo.MarkRunSucceeded(c.Request.Context(), prepared.Run.ID, CompletionResult{
 				Content:      output,
 				InputTokens:  event.InputTokens,
 				OutputTokens: event.OutputTokens,
 				FinishReason: event.FinishReason,
-			}, latencyMS)
+			}, latencyMS, firstTokenLatencyMS)
 			if updateErr != nil {
 				writeSSE(c, GenerateStreamEvent{Type: "error", Error: "failed to update generation run"})
 				return

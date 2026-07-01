@@ -2184,6 +2184,21 @@ p {
   white-space: pre-wrap;
 }
 
+.chat-message__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: #84909b;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.chat-message__metrics span + span::before {
+  margin-right: 12px;
+  color: #c1c9cf;
+  content: "·";
+}
+
 .llm-composer > textarea,
 .chat-message__editor,
 .chat-message__content {

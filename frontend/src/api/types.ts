@@ -272,6 +272,7 @@ export type GenerationRun = {
   output_tokens: number
   finish_reason: string | null
   latency_ms: number
+  first_token_latency_ms: number
   status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   error_message: string | null
   created_at: string
@@ -312,6 +313,10 @@ export type LLMConversationMessage = {
   content: string
   generation_run_id: string | null
   model: string | null
+  input_tokens: number
+  output_tokens: number
+  latency_ms: number
+  first_token_latency_ms: number
   created_at: string
   updated_at: string
 }
