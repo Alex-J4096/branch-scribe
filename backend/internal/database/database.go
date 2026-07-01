@@ -273,6 +273,19 @@ func ensureCompatibility(ctx context.Context, pool *pgxpool.Pool) error {
 			END IF;
 		END;
 		$seed$;
+
+		-- v1 may have been recorded by an older seed function that stopped after
+		-- finding any project Prompt. Re-run the corrected per-task seed once.
+		DO $seed$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM app_migrations WHERE name = 'summary_prompt_operations_v2'
+			) THEN
+				PERFORM seed_default_prompt_operations(id) FROM projects;
+				INSERT INTO app_migrations (name) VALUES ('summary_prompt_operations_v2');
+			END IF;
+		END;
+		$seed$;
 	`)
 	return err
 }

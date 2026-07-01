@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,5 +69,18 @@ func TestDebugHubClearRemovesHistory(t *testing.T) {
 	}
 	if len(hub.sessions) != 0 || len(hub.order) != 0 {
 		t.Fatal("clear did not remove session history")
+	}
+}
+
+func TestDebugWebUIIncludesTaggedPromptFolding(t *testing.T) {
+	content, err := webFiles.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(content)
+	for _, expected := range []string{"promptTagPattern", "renderMessageContent", `class="prompt-block"`} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("debug UI missing %q", expected)
+		}
 	}
 }

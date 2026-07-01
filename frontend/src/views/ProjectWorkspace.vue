@@ -117,6 +117,9 @@ const promptTemplatesQuery = useQuery({
 const branchSummaryPrompts = computed(() =>
   (promptTemplatesQuery.data.value ?? []).filter((template) => template.task_type === 'branch_summary'),
 )
+const defaultBranchSummaryPrompt = computed(() =>
+  branchSummaryPrompts.value.find((template) => template.is_default) ?? null,
+)
 
 const branches = computed(() => branchesQuery.data.value ?? [])
 const branchPalette = ['#2f7d76', '#9b6b28', '#7a4fa3', '#466987', '#b64f6b', '#607449']
@@ -621,46 +624,48 @@ async function refreshWorkspace() {
         <strong>{{ projectQuery.data.value?.name ?? 'BranchScribe' }}</strong>
         <span>{{ graph.nodes.length }} blocks</span>
       </div>
-      <button class="button" type="button" @click="refreshWorkspace">
-        <RefreshCw :size="16" aria-hidden="true" />
-        刷新
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'model-profiles', query: { from: route.fullPath } })">
-        <Settings :size="16" aria-hidden="true" />
-        模型
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'prompt-settings', params: { projectId } })">
-        <MessageSquareText :size="16" aria-hidden="true" />
-        Prompt
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'character' } })">
-        <BookOpen :size="16" aria-hidden="true" />
-        角色
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'location' } })">
-        <MapPin :size="16" aria-hidden="true" />
-        地点
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'rule' } })">
-        <Layers3 :size="16" aria-hidden="true" />
-        规则
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'memory-manager', params: { projectId } })">
-        <Database :size="16" aria-hidden="true" />
-        Memory
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'foreshadowing-manager', params: { projectId } })">
-        <Telescope :size="16" aria-hidden="true" />
-        伏笔
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'timeline-manager', params: { projectId } })">
-        <Clock3 :size="16" aria-hidden="true" />
-        时间线
-      </button>
-      <button class="button" type="button" @click="router.push({ name: 'transfer-manager', params: { projectId } })">
-        <Download :size="16" aria-hidden="true" />
-        导出
-      </button>
+      <nav class="workspace__nav" aria-label="项目工具">
+        <button class="button" type="button" @click="refreshWorkspace">
+          <RefreshCw :size="16" aria-hidden="true" />
+          刷新
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'model-profiles', query: { from: route.fullPath } })">
+          <Settings :size="16" aria-hidden="true" />
+          模型
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'prompt-settings', params: { projectId } })">
+          <MessageSquareText :size="16" aria-hidden="true" />
+          Prompt
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'character' } })">
+          <BookOpen :size="16" aria-hidden="true" />
+          角色
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'location' } })">
+          <MapPin :size="16" aria-hidden="true" />
+          地点
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'canon-manager', params: { projectId, entityType: 'rule' } })">
+          <Layers3 :size="16" aria-hidden="true" />
+          规则
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'memory-manager', params: { projectId } })">
+          <Database :size="16" aria-hidden="true" />
+          Memory
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'foreshadowing-manager', params: { projectId } })">
+          <Telescope :size="16" aria-hidden="true" />
+          伏笔
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'timeline-manager', params: { projectId } })">
+          <Clock3 :size="16" aria-hidden="true" />
+          时间线
+        </button>
+        <button class="button" type="button" @click="router.push({ name: 'transfer-manager', params: { projectId } })">
+          <Download :size="16" aria-hidden="true" />
+          导出
+        </button>
+      </nav>
     </header>
 
     <aside class="workspace__sidebar drawer drawer--left">
@@ -1035,7 +1040,9 @@ async function refreshWorkspace() {
               <label class="field-label">
                 <span>Prompt</span>
                 <select v-model="selectedBranchSummaryPromptId">
-                  <option value="">默认分支摘要 Prompt</option>
+                  <option value="">
+                    {{ defaultBranchSummaryPrompt ? `使用默认：${defaultBranchSummaryPrompt.name}` : '使用系统默认分支摘要 Prompt' }}
+                  </option>
                   <option v-for="template in branchSummaryPrompts" :key="template.id" :value="template.id">
                     {{ template.name }}
                   </option>

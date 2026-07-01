@@ -201,6 +201,7 @@ const summaryPrompts = computed(() => {
   const taskType = blockDetail.value?.block.type === 'chapter' ? 'chapter_summary' : 'block_summary'
   return (promptTemplatesQuery.data.value ?? []).filter((template) => template.task_type === taskType)
 })
+const defaultSummaryPrompt = computed(() => summaryPrompts.value.find((template) => template.is_default) ?? null)
 const selectedPromptOperation = computed(
   () => promptOperations.value.find((operation) => operation.id === selectedPromptTemplateId.value) ?? null,
 )
@@ -1524,14 +1525,16 @@ function replaceEditorSelectionWithGeneratedContent() {
           <Tags :size="16" aria-hidden="true" />
         </button>
         <form v-show="openSections.associations" class="inspector-section__body association-form" @submit.prevent="updateAssociations.mutate()">
-          <label class="field-label">
-            <span>出现角色</span>
-            <select v-model="selectedCharacterIds" multiple class="association-form__multi-select">
-              <option v-for="character in characters" :key="character.id" :value="character.id">
-                {{ canonOptionLabel(character) }}
-              </option>
-            </select>
-          </label>
+          <fieldset class="association-form__character-field">
+            <legend>出现角色</legend>
+            <div v-if="characters.length" class="association-form__character-list">
+              <label v-for="character in characters" :key="character.id" class="association-form__character-option">
+                <input v-model="selectedCharacterIds" type="checkbox" :value="character.id" />
+                <span>{{ canonOptionLabel(character) }}</span>
+              </label>
+            </div>
+            <span v-else class="association-form__empty">项目中还没有角色卡</span>
+          </fieldset>
 
           <label class="field-label">
             <span>地点</span>
@@ -1607,10 +1610,26 @@ function replaceEditorSelectionWithGeneratedContent() {
             </div>
           </template>
           <template v-else>
-            <select v-model="selectedSummaryPromptId">
-              <option value="">默认摘要 Prompt</option>
-              <option v-for="template in summaryPrompts" :key="template.id" :value="template.id">{{ template.name }}</option>
-            </select>
+            <div class="summary-panel__generation-settings">
+              <label class="field-label">
+                <span>摘要模型</span>
+                <select v-model="selectedModelProfileId">
+                  <option value="" disabled>选择摘要模型</option>
+                  <option v-for="profile in modelProfiles" :key="profile.id" :value="profile.id" :disabled="!profile.has_api_key">
+                    {{ profile.name }} · {{ profile.model }}{{ profile.has_api_key ? '' : '（未配置 Key）' }}
+                  </option>
+                </select>
+              </label>
+              <label class="field-label">
+                <span>摘要 Prompt</span>
+                <select v-model="selectedSummaryPromptId">
+                  <option value="">
+                    {{ defaultSummaryPrompt ? `使用默认：${defaultSummaryPrompt.name}` : '使用系统默认摘要 Prompt' }}
+                  </option>
+                  <option v-for="template in summaryPrompts" :key="template.id" :value="template.id">{{ template.name }}</option>
+                </select>
+              </label>
+            </div>
             <div class="summary-panel__actions">
               <button class="button" type="button" @click="openManualSummary('create')">
                 <Plus :size="15" aria-hidden="true" />手动新增

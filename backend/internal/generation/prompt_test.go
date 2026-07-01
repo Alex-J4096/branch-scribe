@@ -48,3 +48,44 @@ func TestBuildContextSkipsContextAssemblyWhenWritingOperationDisabled(t *testing
 		t.Fatalf("disabled operation still assembled context: %#v", preview)
 	}
 }
+
+func TestRenderUserPromptWrapsTemplateVariablesInChineseTags(t *testing.T) {
+	enabled := true
+	template := &PromptTemplate{
+		ID:           "template",
+		TemplateText: "写作要求\n\n硬设定：\n{{canon_facts}}\n\n当前片段：\n{{current_block}}\n\n用户指令：\n{{user_instruction}}",
+	}
+	prompt, _ := renderUserPrompt(
+		GenerateOnceRequest{
+			UserInstruction:     "继续写下去",
+			ApplyPromptTemplate: &enabled,
+		},
+		BlockContext{},
+		map[string]string{
+			"canon_facts":   "角色不能飞",
+			"current_block": "他站在山顶。",
+		},
+		template,
+	)
+	want := "写作要求\n\n<硬设定>\n角色不能飞\n</硬设定>\n\n<当前片段>\n他站在山顶。\n</当前片段>\n\n<用户指令>\n继续写下去\n</用户指令>"
+	if prompt != want {
+		t.Fatalf("tagged prompt = %q, want %q", prompt, want)
+	}
+}
+
+func TestRenderUserPromptDoesNotNestExistingTags(t *testing.T) {
+	enabled := true
+	template := &PromptTemplate{
+		ID:           "template",
+		TemplateText: "<用户指令>\n{{user_instruction}}\n</用户指令>",
+	}
+	prompt, _ := renderUserPrompt(
+		GenerateOnceRequest{UserInstruction: "继续", ApplyPromptTemplate: &enabled},
+		BlockContext{},
+		nil,
+		template,
+	)
+	if prompt != "<用户指令>\n继续\n</用户指令>" {
+		t.Fatalf("prompt = %q", prompt)
+	}
+}

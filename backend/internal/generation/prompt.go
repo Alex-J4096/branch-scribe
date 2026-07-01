@@ -8,6 +8,12 @@ import (
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
+type promptBlockVariable struct {
+	Placeholder string
+	Tag         string
+	Value       string
+}
+
 func renderUserPrompt(req GenerateOnceRequest, blockContext BlockContext, contextText map[string]string, template *PromptTemplate) (string, *string) {
 	if !req.shouldApplyPromptTemplate() {
 		return conversationUserContent(req), nil
@@ -28,20 +34,39 @@ func renderUserPrompt(req GenerateOnceRequest, blockContext BlockContext, contex
 		blockTitle = *blockContext.BlockTitle
 	}
 
-	prompt := strings.NewReplacer(
-		"{{project_description}}", projectDescription,
-		"{{current_block_title}}", blockTitle,
-		"{{current_block}}", contextText["current_block"],
-		"{{canon_facts}}", contextText["canon_facts"],
-		"{{recent_blocks}}", contextText["recent_blocks"],
-		"{{branch_summary}}", contextText["branch_summary"],
-		"{{chapter_summary}}", contextText["chapter_summary"],
-		"{{memory_chunks}}", contextText["memory_chunks"],
-		"{{selected_text}}", req.SelectedText,
-		"{{user_instruction}}", req.UserInstruction,
-	).Replace(templateText)
+	prompt := templateText
+	for _, variable := range []promptBlockVariable{
+		{Placeholder: "{{project_description}}", Tag: "项目简介", Value: projectDescription},
+		{Placeholder: "{{current_block_title}}", Tag: "当前片段标题", Value: blockTitle},
+		{Placeholder: "{{current_block}}", Tag: "当前片段", Value: contextText["current_block"]},
+		{Placeholder: "{{canon_facts}}", Tag: "硬设定", Value: contextText["canon_facts"]},
+		{Placeholder: "{{recent_blocks}}", Tag: "最近正文", Value: contextText["recent_blocks"]},
+		{Placeholder: "{{branch_summary}}", Tag: "分支摘要", Value: contextText["branch_summary"]},
+		{Placeholder: "{{chapter_summary}}", Tag: "章节摘要", Value: contextText["chapter_summary"]},
+		{Placeholder: "{{memory_chunks}}", Tag: "相关记忆", Value: contextText["memory_chunks"]},
+		{Placeholder: "{{selected_text}}", Tag: "选中文本", Value: req.SelectedText},
+		{Placeholder: "{{user_instruction}}", Tag: "用户指令", Value: req.UserInstruction},
+	} {
+		prompt = renderPromptBlockVariable(prompt, variable)
+	}
 
 	return prompt, templateID
+}
+
+func renderPromptBlockVariable(templateText string, variable promptBlockVariable) string {
+	block := "<" + variable.Tag + ">\n" + variable.Value + "\n</" + variable.Tag + ">"
+	for _, taggedPlaceholder := range []string{
+		"<" + variable.Tag + ">" + variable.Placeholder + "</" + variable.Tag + ">",
+		"<" + variable.Tag + ">\n" + variable.Placeholder + "\n</" + variable.Tag + ">",
+		"<" + variable.Tag + ">\r\n" + variable.Placeholder + "\r\n</" + variable.Tag + ">",
+		variable.Tag + "：\n" + variable.Placeholder,
+		variable.Tag + "：\r\n" + variable.Placeholder,
+		variable.Tag + ":\n" + variable.Placeholder,
+		variable.Tag + ":\r\n" + variable.Placeholder,
+	} {
+		templateText = strings.ReplaceAll(templateText, taggedPlaceholder, block)
+	}
+	return strings.ReplaceAll(templateText, variable.Placeholder, block)
 }
 
 func defaultSystemPrompt() string {

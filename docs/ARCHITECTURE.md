@@ -1345,6 +1345,7 @@ branchscribe/
 * [x] 添加 API client。
 * [x] 添加环境变量配置。
 * [x] 添加基础页面：ProjectList、ProjectWorkspace。
+* [x] 系统审查并修复界面层级、控件状态、排版和窄屏适配问题。
 
 ### DevOps 任务
 
@@ -1531,6 +1532,7 @@ branchscribe/
 * [x] 将调试界面调整为明亮主题与更直观的信息层级。
 * [x] 同时提供易读的渲染视图和完整 Metadata / 原始 JSON 查看。
 * [x] 流式事件更新期间保持历史请求列表可交互，避免高频全页面重绘阻塞调试界面。
+* [x] Debug Messages 识别 Prompt 中文标签块，并支持折叠查看长上下文。
 * [x] 修复 LLM 流式生成期间已落库 User 消息与本地 pending 消息重复显示的问题。
 * [x] 为单版本发送入口增加同步防重锁，避免快速重复触发真实请求。
 
@@ -1579,6 +1581,7 @@ branchscribe/
 * [x] 实现 memory 列表页面。
 * [x] 在 block inspector 中添加 metadata 编辑。
 * [x] 支持为 block 选择出现角色。
+* [x] 将角色关联改为明确的逐项复选，避免原生多选控件误关联全部角色。
 * [x] 支持为 block 选择地点。
 * [x] 支持手动触发 reindex。
 * [x] 显示当前 block 关联的 canon entities。
@@ -1632,6 +1635,7 @@ branchscribe/
 * [x] 支持在 Chatbox 中新增、编辑和删除写作操作及其 Prompt。
 * [x] 为每个项目初始化可编辑的默认写作操作，并在生成时使用选中的 Prompt Template。
 * [x] 写作操作支持显式开关：新对话首轮默认启用，后续轮次默认只发送原始 User 指令。
+* [x] Prompt 模板变量统一渲染为 `<硬设定>...</硬设定>` 等中文标签块。
 * [x] 支持快捷切换模型、创建/切换/删除对话。
 * [x] 支持复制、编辑 user/assistant 消息，编辑仅保存当前消息且不截断后续对话。
 * [x] 支持从任意 assistant 回复直接保存 Revision。
@@ -1703,6 +1707,8 @@ branchscribe/
 * [x] 分支级持久化摘要模型、Prompt 和上下文构成设置。
 * [x] 摘要生成请求支持由用户主动取消并终止上游请求。
 * [x] Block / Chapter 摘要支持手动新增和编辑快照。
+* [x] Block / Chapter 摘要面板支持就地选择生成模型。
+* [x] 为已有项目可靠补种并在 Prompt 管理中展示默认摘要 Prompt。
 
 ### 验收标准
 
